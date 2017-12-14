@@ -1,8 +1,12 @@
+""" Laser lockmonitor that uses information from cavity transmission
+and piezovoltage"""
+
 #!/usr/bin/env python
 
 import sys
 import os
 import time
+import serial
 from PIL import Image, ImageStat
 
 # first find ourself
@@ -36,6 +40,21 @@ def get_ule_state():
         locked = 1
     return (total,locked)
 
+def get_piezovoltage(serialdevice):
+    serialdevice.write("XR?\r\n")
+    response=serialdevice.readline()
+    word=response.split()[-1] # breakdown the reply into multiple words, and pick the last one that contains voltage readings
+    voltage=float(word[0:-1])
+    return voltage
+
+def get_piezostate(setpoint,tolerance,reading):
+  #if setpoint<0 or setpoint>150:
+  #  print "check if your setpoint is greater than 0 and less than 150 V"
+  if abs(setpoint-reading)<tolerance:
+    return 1
+  else:
+    return 0
+
 # something that represents the connection to the server
 # might need arguments.... idk
 serv = server(config)
@@ -55,11 +74,31 @@ print "success"
 # print "problem establishing connection to server..."
 # sys.exit(1)
 
+# Connects to piezocontroller(MDT694A) via RS232-USB interface
+ser=serial.Serial('/dev/ttyUSB0',
+                  baudrate=115200,
+                  bytesize=serial.EIGHTBITS,
+                  parity=serial.PARITY_NONE,
+                  stopbits=serial.STOPBITS_ONE)
+# Identify piezocontroller
+time.sleep(0.1) # wait so serial comm is initialized
+ser.write("I\r\n")
+response=ser.readline()
+print response
+
 
 # This might need to be more complicated, but you get the gist. Keep sending records forever
 time.sleep(1)
 avgs=20
 lockState=0
+piezoState_past=0
+piezovoltage=get_piezovoltage(ser)
+setpoint=piezovoltage
+tolerance=1.0
+print "This piezovoltage will be used to filter wrong cavity modes : {} V".format(piezovoltage)
+piezoState_now=get_piezostate(setpoint,tolerance,setpoint)
+piezoState_past=piezoState_now
+
 lastLock = -1
 
 while True:
@@ -80,6 +119,9 @@ while True:
             print "!"*60
             print "960 Laser Unlock Event Detected"
             os.system('echo 1 > /sys/class/gpio/gpio15/value')
+            piezovoltage=get_piezovoltage(ser)
+            piezoState_now=get_piezostate(setpoint,tolerance,piezovoltage)
+            print "piezovoltage is at {}, setpoint was {}".format(piezovoltage,setpoint)
             print time.strftime("%Y-%m-%d %H:%M")
             if(lastLock>0):
                 print "uptime: {} hours".format((ts-lastLock)/(3600*2**32))
@@ -92,16 +134,24 @@ while True:
         if (lockState==0):
             lockState=1
             lastLock = ts
+            piezovoltage=get_piezovoltage(ser)
+            piezoState_now=get_piezostate(setpoint,tolerance,piezovoltage)
             print ""
             print "*"*60
-            print "960 Laser Lock Aquired"
-            os.system('echo 0 > /sys/class/gpio/gpio15/value')
+            print "960 Laser Lock Acquired."
+            if piezoState_now==1:
+              print "Correct cavity mode."
+              print "piezovoltage is at {}, setpoint was {}".format(piezovoltage,setpoint)
+              os.system('echo 0 > /sys/class/gpio/gpio15/value')
+            elif piezoState_now==0:
+              print "Incorrect cavity mode."
+              print "piezovoltage is at {}, setpoint was {}".format(piezovoltage,setpoint)
             print time.strftime("%Y-%m-%d %H:%M")
             print "*"*60
             print ""
         # business as usual
         
-    data = { TIMESTAMP: ts, "trans": trans, "lock": lock }
+    data = { TIMESTAMP: ts, "trans": trans, "lock": lock , "cavitymode" : piezoState_now, "piezovoltage" : piezovoltage}
     #print "sending...."
     connection.send(**data)
     #print("time: {}\ntransmission: {}\nlock state: {}".format(ts,trans,lock))
