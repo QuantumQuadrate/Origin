@@ -2,7 +2,6 @@
 
 from setuptools import setup, find_packages
 
-
 setup(
     name='Origin',
     version='1.0',
@@ -10,7 +9,8 @@ setup(
     author='Orthogonal Systems, LLC',
     author_email='admin@orthogonalsystems.com',
     url='https://github.com/Orthogonal-Systems/Origin',
-    packages=find_packages(exclude=("tests",)),
+    package_dir={'': 'lib'},
+    packages=find_packages('lib', exclude=("tests", 'tests.*')),
     license='GPL3',
     install_requires=[
         'pyzmq',
