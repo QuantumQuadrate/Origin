@@ -1,43 +1,4 @@
 #!/usr/bin/env python
-
-import sys, traceback
-import os
-fullBinPath  = os.path.abspath(os.path.join(os.getcwd(), sys.argv[0]))
-fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
-fullLibPath  = os.path.join(fullBasePath, "lib")
-fullVarPath  = os.path.join(fullBasePath, "var")
-fullCfgPath  = os.path.join(fullBasePath, "config")
-sys.path.append(fullLibPath)
-
-import origin
-if len(sys.argv) > 1:
-  if sys.argv[1] == 'test':
-    configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
-  else:
-    configfile = os.path.join(fullCfgPath, sys.argv[1])
-else:
-  configfile = os.path.join(fullCfgPath, "origin-server.cfg")
-
-import ConfigParser
-config = ConfigParser.ConfigParser()
-config.read(configfile)
-# add base path to config object since we wont know it until we run
-config.set('Server','base_path', fullBasePath)
-config.set('Server','var_path',  fullVarPath)
-
-import argparse
-import time
-import sys
-import logging
-import threading
-
-import zmq
-from zmq.eventloop import ioloop
-from zmq.eventloop.zmqstream import ZMQStream
-
-import json
-import struct
-
 """
 ..module::MonServer
   :synopsis: Module encapsulating the Server var
@@ -55,381 +16,427 @@ http://learning-0mq-with-pyzmq.readthedocs.org/en/latest/pyzmq/multisocket/torna
 
 """
 
+import sys
+import os
+import ConfigParser
+import logging
+import threading
+
+import zmq
+from zmq.eventloop import ioloop
+from zmq.eventloop.zmqstream import ZMQStream
+
+import json
+import struct
+
+mysql = False
+hdf5 = False
+mongo = False
+
+try:
+    from origin.server import MySQLDestination
+    mysql = True
+except ImportError:
+    print "MySQL destination not available."
+try:
+    from origin.server import HDF5Destination
+    hdf5 = True
+except ImportError:
+    print "HDF5 destination not available."
+from origin.server import FilesystemDestination
+try:
+    from origin.server import MongoDBDestination
+    mongo = True
+except ImportError:
+    print "Mongo destination not available."
+
+
 class MonServer(object):
-  def __init__(self, logger, config):
-    self.logger = logger
-    self.streamfile = ""
-    self.state = "UNKNOWN"
-    self._strlist = {}
+    def __init__(self, logger, config):
+        self.logger = logger
+        self.streamfile = ""
+        self.state = "UNKNOWN"
+        self._strlist = {}
 
-    dest = config.get("Server", "destination").lower()
-    if  dest == "mysql":
-        from origin.server import MySQLDestination
-        self.dest = MySQLDestination(logger,config)
-
-    elif dest == "hdf5":
-        from origin.server import HDF5Destination
-        self.dest = HDF5Destination(logger,config)
-
-    elif dest == "filesystem":
-        from origin.server import FilesystemDestination
-        self.dest = FilesystemDestination(logger,config)
-
-    elif dest == "mongodb":
-        from origin.server import MongoDBDestination
-        self.dest = MongoDBDestination(logger,config)
-
-    elif dest == '':
-        logger.critical("No destination specified in configs. Killing server...")
-        sys.exit(1)
-
-    else:
-        logger.critical("Unrecognized destination {} specified. Killing server...".format(dest))
-        sys.exit(1)
-
-    # the publish socket does not use the event system that eveything else uses
-    # I cant assign a class method to it, so it is defined here instead
-    pub_addr = "tcp://*"
-    pub_port = config.getint("Server","pub_port")
-    self.pub_socket = zmq.Context.instance().socket(zmq.PUB)
-    self.pub_socket.bind("%s:%s" % (pub_addr,pub_port))
-
-
-  ## DATA HANDLER #######################################################
-  def processDataMsg(self,msg,format='native'):
-    #self.logger.info('data msg recieved...')
-    for m in msg:
-      if m != '':
-        self.processSingleDataMsg(m,format)
-
-  def processJSONDataMsg(self,msg):
-      self.processDataMsg(msg, format='JSON')
-
-  def processSingleDataMsg(self,msg,format='native'):
-    messageDecoded = None
-    stream = None
-    result = None
-    resultText = None
-    fail = False
-    binaryData = False
-
-    try:
-      if format=='native':
-        binaryData = True
-        streamID = struct.unpack("!I",msg[:4])[0]
-        stream = self.dest.find_stream(streamID)
-        self.logger.debug('data msg recieved, for stream '+stream)
-        data = msg[4:] # remove first 4 bytes
-      elif format=='JSON':
-        messageDecoded = json.loads(msg)
-        stream = messageDecoded[0]
-        streamID = self.dest.known_streams[stream]["id"]
-      else:
-        result = 1
-        resultText = "Unrecognized data format `{}` specified".format(format)
-        fail = True
-
-    except Exception as e:
-      result = 1
-      resultText = "Failed to decode message from client"
-      fail = True
-      self.logger.exception("Exception in user code.")
-
-    if not fail:
-      if binaryData:
-        result, resultText, meas = self.dest.measurement_binary(stream,data)
-
-      else:
-        if len(messageDecoded) != 3:
-          result = 1
-          resultText = "Measurement message didn't have all the required fields"
-        elif (type(messageDecoded[1]) != int) and (type(messageDecoded[1])!= long):
-          result = 1
-          resultText = "Non-integer time sent"
+        # create a destination object
+        dest = config.get("Server", "destination").lower()
+        if dest == "mysql":
+            self.dest = MySQLDestination(logger, config)
+        elif dest == "hdf5":
+            self.dest = HDF5Destination(logger, config)
+        elif dest == "filesystem":
+            self.dest = FilesystemDestination(logger, config)
+        elif dest == "mongodb":
+            self.dest = MongoDBDestination(logger, config)
+        elif dest == '':
+            logger.critical("No destination specified in configs. Killing server...")
+            sys.exit(1)
         else:
-          recordTime = messageDecoded[1]
-          measurements = messageDecoded[2]
-          result, resultText, meas = self.dest.measurement(stream,measurements)
+            logger.critical("Unrecognized destination {} specified. Killing server...".format(dest))
+            sys.exit(1)
 
-    if result != 0:
-      if binaryData:
-        msg = ":".join("{:02x}".format(ord(c)) for c in msg)
-      self.logger.warn("Got a message I can't do anything with. Error: %s Message: %s"%(resultText,msg))
-    else:
-      self.publish(streamID, meas)
+        # the publish socket does not use the event system that eveything else uses
+        # I cant assign a class method to it, so it is defined here instead
+        pub_addr = "tcp://*"
+        pub_port = config.getint("Server", "pub_port")
+        self.pub_socket = zmq.Context.instance().socket(zmq.PUB)
+        self.pub_socket.bind("%s:%s" % (pub_addr, pub_port))
 
-  ## REGISTRATION HANDLER ###############################################
-  def registerStream(self, reg_stream, msg, format='native'):
-    for m in msg:
-      self.registerSingleStream(reg_stream, m, format)
+    # DATA HANDLER #######################################################
+    def processDataMsg(self, msg, format='native'):
+        # self.logger.info('data msg recieved...')
+        for m in msg:
+            if m != '':
+                self.processSingleDataMsg(m, format)
 
-  def registerJSONStream(self, reg_stream, msg):
-      self.registerStream(reg_stream, msg, format='JSON')
+    def processJSONDataMsg(self, msg):
+        self.processDataMsg(msg, format='JSON')
 
-  def registerSingleStream(self,reg_stream,msg,format='native'):
-    verb = None
-    messageDecoded = None
-    stream = None
+    def processSingleDataMsg(self, msg, format='native'):
+        messageDecoded = None
+        stream = None
+        result = None
+        resultText = None
+        fail = False
+        binaryData = False
 
-    result = None
-    resultText = None
-    fail = False
-    keyOrder = []
+        try:
+            if format == 'native':
+                binaryData = True
+                streamID = struct.unpack("!I", msg[:4])[0]
+                stream = self.dest.find_stream(streamID)
+                self.logger.debug('data msg recieved, for stream '+stream)
+                data = msg[4:]  # remove first 4 bytes
+            elif format == 'JSON':
+                messageDecoded = json.loads(msg)
+                stream = messageDecoded[0]
+                streamID = self.dest.known_streams[stream]["id"]
+            else:
+                result = 1
+                resultText = "Unrecognized data format `{}` specified".format(format)
+                fail = True
 
-    try:
-      if format=='native':
-        messageDecoded = msg.split(',')
-        recordDict = {}
-        for entry in messageDecoded[1:]:
-          key, dtype = entry.split(':')
-          key = key.strip()
-          recordDict[key] = dtype.strip()
-          keyOrder.append(key)
+        except Exception as e:
+            result = 1
+            resultText = "Failed to decode message from client"
+            fail = True
+            self.logger.exception("Exception in user code.")
 
-      elif format=='JSON':
-        messageDecoded = json.loads(msg)
-        recordDict = messageDecoded[1]
-        rawKeyList = msg.split('{')[1]
-        rawKeyList = rawKeyList.split('}')[0]
-        rawKeyList = rawKeyList.split(',')
-        for idx, rawKey in enumerate(rawKeyList):
-          for key in recordDict:
-            if rawKey.find('"{}"'.format(key)) != -1:
-              keyOrder.append(key.strip())
-              break
-      else:
-        result = 1
-        resultText = "Unrecognized registration format `{}` specified".format(format)
-        fail = True
+        if not fail:
+            if binaryData:
+                result, resultText, meas = self.dest.measurement_binary(stream, data)
 
-    except:
-      result = 1
-      resultText = "Failed to decode message from client"
-      fail = True
+            else:
+                if len(messageDecoded) != 3:
+                    result = 1
+                    resultText = "Measurement message didn't have all the required fields"
+                elif (type(messageDecoded[1]) != int) and (type(messageDecoded[1]) != long):
+                    result = 1
+                    resultText = "Non-integer time sent"
+                else:
+                    recordTime = messageDecoded[1]
+                    measurements = messageDecoded[2]
+                    result, resultText, meas = self.dest.measurement(stream, measurements)
 
-    if not fail:
-      stream = messageDecoded[0]
-      self.logger.info("Received registration of stream %s"%(stream))
-      result,resultText = self.dest.register_stream(stream,recordDict,keyOrder)
-
-    if result!=0:
-      self.logger.warn("Unable to register stream. Got msg that is badly formatted: %s"%(msg))
-
-    returnMessage = (str(result),resultText)
-    reg_stream.send(','.join(returnMessage))
-
-  ## ALERT HANDLER ######################################################
-  def processAlertMsg(self,alert_stream,msg):
-    #Placeholder for testing alert messages
-    try:
-      messageDecoded = json.loads(msg)
-    except ValueError:
-      result = 1
-      resultText = "Failed to decode alert"
-      fail = True
-    if not fail:
-      self.logger.info("Received alert message")
-
-    returnMessage = [result,resultText]
-    alert_stream.send(json.dumps(returnMessage))
-
-  def CheckAlerts(self):
-    # Do Something to sim checking
-    # Will drop in full alert chain after testing
-    list = range(200)
-    for l in list:
-      d = l*l
-
-  ## READ REQUEST HANDLER ################################################
-
-  def processSingleReadMsg(self, msg):
-    # if msg is an empty JSON object then send back the list of known streams
-    # this is used for subscriptions
-    if msg == '{}':
-        return (0, dict(streams=self.dest.known_streams))
-
-    result = 1 # error flag should be cleared during measurement
-    try:
-      request_obj = json.loads(msg)
-      stream = request_obj['stream'].strip()
-    except ValueError:
-      data = dict(streams=self.dest.known_streams, error="Failed to decode request.")
-    except KeyError:
-      data = dict(streams=self.dest.known_streams, error="Request did not have stream property.")
-    else:
-      if 'start' in request_obj:
-        start = request_obj['start']
-      else:
-        start = None
-      if 'stop' in request_obj:
-        stop = request_obj['stop']
-      else:
-        stop = None
-
-      try:
-        if 'fields' in request_obj:
-          # expecting a list of fields
-          fields = [ f.strip() for f in request_obj['fields'] ]
+        if result != 0:
+            if binaryData:
+                msg = ":".join("{:02x}".format(ord(c)) for c in msg)
+            self.logger.warn("Got a message I can't do anything with. Error: {} Message: {}".format(resultText, msg))
         else:
-          # get all fields
-          fields = []
-        self.logger.debug("Read request for stream `{}.{}` recieved.".format(stream,fields))
-        if ('raw' in request_obj) and request_obj['raw']:
-          self.logger.debug("Raw data requested.")
-          result, data, resultText = self.dest.get_raw_stream_data(
-                stream,
-                fields=fields,
-                start=start,
-                stop=stop
-          )
+            self.publish(streamID, meas)
+
+    # REGISTRATION HANDLER ###############################################
+    def registerStream(self, reg_stream, msg, format='native'):
+        for m in msg:
+            self.registerSingleStream(reg_stream, m, format)
+
+    def registerJSONStream(self, reg_stream, msg):
+        self.registerStream(reg_stream, msg, format='JSON')
+
+    def registerSingleStream(self, reg_stream, msg, format='native'):
+        verb = None
+        messageDecoded = None
+        stream = None
+
+        result = None
+        resultText = None
+        fail = False
+        keyOrder = []
+
+        try:
+            if format == 'native':
+                messageDecoded = msg.split(',')
+                recordDict = {}
+                for entry in messageDecoded[1:]:
+                    key, dtype = entry.split(':')
+                    key = key.strip()
+                    recordDict[key] = dtype.strip()
+                    keyOrder.append(key)
+
+            elif format == 'JSON':
+                messageDecoded = json.loads(msg)
+                recordDict = messageDecoded[1]
+                rawKeyList = msg.split('{')[1]
+                rawKeyList = rawKeyList.split('}')[0]
+                rawKeyList = rawKeyList.split(',')
+                for idx, rawKey in enumerate(rawKeyList):
+                    for key in recordDict:
+                        if rawKey.find('"{}"'.format(key)) != -1:
+                            keyOrder.append(key.strip())
+                            break
+            else:
+                result = 1
+                resultText = "Unrecognized registration format `{}` specified".format(format)
+                fail = True
+
+        except:
+            result = 1
+            resultText = "Failed to decode message from client"
+            fail = True
+
+        if not fail:
+            stream = messageDecoded[0]
+            self.logger.info("Received registration of stream {}".format(stream))
+            result, resultText = self.dest.register_stream(stream, recordDict, keyOrder)
+
+        if result != 0:
+            self.logger.warn("Unable to register stream. Got msg that is badly formatted: {}".format(msg))
+
+        returnMessage = (str(result), resultText)
+        reg_stream.send(','.join(returnMessage))
+
+    # ALERT HANDLER ######################################################
+    def processAlertMsg(self, alert_stream, msg):
+        # Placeholder for testing alert messages
+        try:
+            messageDecoded = json.loads(msg)
+        except ValueError:
+            result = 1
+            resultText = "Failed to decode alert"
+            fail = True
+        if not fail:
+            self.logger.info("Received alert message")
+
+        returnMessage = [result, resultText]
+        alert_stream.send(json.dumps(returnMessage))
+
+    def CheckAlerts(self):
+        # Do Something to sim checking
+        # Will drop in full alert chain after testing
+        list = range(200)
+        for l in list:
+            d = l*l
+
+    # READ REQUEST HANDLER ################################################
+    def processSingleReadMsg(self, msg):
+        # if msg is an empty JSON object then send back the list of known streams
+        # this is used for subscriptions
+        if msg == '{}':
+            return (0, dict(streams=self.dest.known_streams))
+
+        result = 1  # error flag should be cleared during measurement
+        try:
+            request_obj = json.loads(msg)
+            stream = request_obj['stream'].strip()
+        except ValueError:
+            data = dict(streams=self.dest.known_streams, error="Failed to decode request.")
+        except KeyError:
+            data = dict(streams=self.dest.known_streams, error="Request did not have stream property.")
         else:
-          result, data, resultText = self.dest.get_stat_stream_data(
-                stream,
-                fields=fields,
-                start=start,
-                stop=stop
-          )
+            if 'start' in request_obj:
+                start = request_obj['start']
+            else:
+                start = None
+            if 'stop' in request_obj:
+                stop = request_obj['stop']
+            else:
+                stop = None
 
-      except Exception:
-        self.logger.exception("Unexpected exception in read message code:")
-        # return a list of valid options for the read
-        resultText ="Server encountered an error."
+            try:
+                if 'fields' in request_obj:
+                    # expecting a list of fields
+                    fields = [f.strip() for f in request_obj['fields']]
+                else:
+                    # get all fields
+                    fields = []
+                self.logger.debug("Read request for stream `{}.{}` recieved.".format(stream, fields))
+                if ('raw' in request_obj) and request_obj['raw']:
+                    self.logger.debug("Raw data requested.")
+                    result, data, resultText = self.dest.get_raw_stream_data(
+                        stream,
+                        fields=fields,
+                        start=start,
+                        stop=stop
+                    )
+                else:
+                    result, data, resultText = self.dest.get_stat_stream_data(
+                        stream,
+                        fields=fields,
+                        start=start,
+                        stop=stop
+                    )
 
-      if result == 1:
-        data = dict(stream=self.dest.known_streams, error=resultText)
+            except Exception:
+                self.logger.exception("Unexpected exception in read message code:")
+                # return a list of valid options for the read
+                resultText = "Server encountered an error."
 
-    finally:
-      return (result, data)
+            if result == 1:
+                data = dict(stream=self.dest.known_streams, error=resultText)
 
-    ## STREAMING PUBLISHER #################################################
-  def publish(self, streamID, data):
-    msg = [b"{0:04d}".format(streamID), json.dumps(data)]
-    self.logger.debug("Sending data: " + str(msg))
-    self.pub_socket.send_multipart(msg)
+        finally:
+            return (result, data)
+
+    # STREAMING PUBLISHER #################################################
+    def publish(self, streamID, data):
+        msg = [b"{0:04d}".format(streamID), json.dumps(data)]
+        self.logger.debug("Sending data: " + str(msg))
+        self.pub_socket.send_multipart(msg)
+
 
 # READ FORMAT ########################################################
 def read_worker(mon, addr, context, logger):
-  '''threadable worker class so long read operations dont block other sockets'''
-  logger.info("read_worker thread started.  Waiting for read requests...")
+    '''threadable worker class so long read operations dont block other sockets'''
+    logger.info("read_worker thread started.  Waiting for read requests...")
 
-  read_socket = context.socket(zmq.REP)
-  read_socket.bind(addr)
+    read_socket = context.socket(zmq.REP)
+    read_socket.bind(addr)
 
-  while True:
-      message = read_socket.recv()
-      read_socket.send_json(mon.processSingleReadMsg(message))
+    while True:
+        message = read_socket.recv()
+        read_socket.send_json(mon.processSingleReadMsg(message))
+
 
 def main():
-  if not os.path.exists(fullVarPath):
-    os.mkdir(fullVarPath)
+    fullBinPath = os.path.abspath(os.path.join(os.getcwd(), sys.argv[0]))
+    fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+    fullVarPath = os.path.join(fullBasePath, "var")
+    fullCfgPath = os.path.join(fullBasePath, "config")
 
-  #  parser = argparse.ArgumentParser(description='Lightweight Monitoring Server for HAWC')
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'test':
+            configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+        else:
+            configfile = os.path.join(fullCfgPath, sys.argv[1])
+    else:
+        configfile = os.path.join(fullCfgPath, "origin-server.cfg")
 
-  # parser.add_argument('-c','--config', type=str, default="site",
-  #                     help='configuration bundle (site,test)')
-  # parser.add_argument('-l', '--logfile', type=str, default="%s/ORIGIN.log"%(fullVarPath),
-  #                  help='LogFile location')
-  # parser.add_argument('-L', '--loglevel', type=str, default="DEBUG",
-  #                  help='Logging verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL')
-  # parser.add_argument('-V', '--verbosity', type=str, default="DEBUG",
-  #                  help='Console verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL')
+    config = ConfigParser.ConfigParser()
+    config.read(configfile)
+    # add base path to config object since we wont know it until we run
+    config.set('Server', 'base_path', fullBasePath)
+    config.set('Server', 'var_path',  fullVarPath)
 
-  # args = parser.parse_args()
+    if not os.path.exists(fullVarPath):
+        os.mkdir(fullVarPath)
 
-  logger = logging.getLogger('Monitor')
-  logger.setLevel(logging.INFO)
+    #  parser = argparse.ArgumentParser(description='Lightweight Monitoring Server for HAWC')
 
-  # Add Console logger
-  cLog = logging.StreamHandler()
-  cLog.setLevel("INFO")
-  formatter = logging.Formatter('%(levelname)s - %(message)s')
-  cLog.setFormatter(formatter)
-  logger.addHandler(cLog)
+    # parser.add_argument('-c','--config', type=str, default="site",
+    #                     help='configuration bundle (site,test)')
+    # parser.add_argument('-l', '--logfile', type=str, default="%s/ORIGIN.log"%(fullVarPath),
+    #                  help='LogFile location')
+    # parser.add_argument('-L', '--loglevel', type=str, default="DEBUG",
+    #                  help='Logging verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL')
+    # parser.add_argument('-V', '--verbosity', type=str, default="DEBUG",
+    #                  help='Console verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL')
 
-  # Add File logger
-  fLog = logging.FileHandler("%s/ORIGIN.log"%(fullVarPath))
-  fLog.setLevel("DEBUG")
-  formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-  fLog.setFormatter(formatter)
-  logger.addHandler(fLog)
-  logger.info("Successfully Started Logging")
+    # args = parser.parse_args()
 
-  logger.info("Current directory: {}".format(os.getcwd()))
-  logger.info("Origin library path: {}".format(fullLibPath))
+    logger = logging.getLogger('Monitor')
+    logger.setLevel(logging.INFO)
 
-  reg_addr = "tcp://*"
-  reg_port = config.getint("Server","register_port")
+    # Add Console logger
+    cLog = logging.StreamHandler()
+    cLog.setLevel("INFO")
+    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    cLog.setFormatter(formatter)
+    logger.addHandler(cLog)
 
-  data_addr = "tcp://*"
-  data_port = config.getint("Server","measure_port")
+    # Add File logger
+    fLog = logging.FileHandler("{}/ORIGIN.log".format(fullVarPath))
+    fLog.setLevel("DEBUG")
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fLog.setFormatter(formatter)
+    logger.addHandler(fLog)
+    logger.info("Successfully Started Logging")
 
-  json_reg_addr = "tcp://*"
-  json_reg_port = config.getint("Server","json_register_port")
+    logger.info("Current directory: {}".format(os.getcwd()))
 
-  json_data_addr = "tcp://*"
-  json_data_port = config.getint("Server","json_measure_port")
+    reg_addr = "tcp://*"
+    reg_port = config.getint("Server", "register_port")
 
-  alert_addr = "tcp://*"
-  alert_port = config.getint("Server","alert_port")
+    data_addr = "tcp://*"
+    data_port = config.getint("Server", "measure_port")
 
-  read_addr = "tcp://*"
-  read_port = config.getint("Server","read_port")
+    json_reg_addr = "tcp://*"
+    json_reg_port = config.getint("Server", "json_register_port")
 
-  update_period = config.getint("Server","alert_check_period")*1e3
+    json_data_addr = "tcp://*"
+    json_data_port = config.getint("Server", "json_measure_port")
 
-  context = zmq.Context.instance()
+    alert_addr = "tcp://*"
+    alert_port = config.getint("Server", "alert_port")
 
-  # Setup Server
-  mon = MonServer(logger, config)
+    read_addr = "tcp://*"
+    read_port = config.getint("Server", "read_port")
 
-  # NATIVE FORMAT ######################################################
-  reg_socket = context.socket(zmq.REP)
-  reg_socket.bind("%s:%s" % (reg_addr,reg_port))
+    update_period = config.getint("Server", "alert_check_period")*1e3
 
-  reg_stream = ZMQStream(reg_socket)
-  reg_stream.on_recv_stream(mon.registerStream)
+    context = zmq.Context.instance()
 
-  data_socket = context.socket(zmq.PULL)
-  data_socket.bind("%s:%s" % (data_addr,data_port))
+    # Setup Server
+    mon = MonServer(logger, config)
 
-  data_stream = ZMQStream(data_socket)
-  data_stream.on_recv(mon.processDataMsg)
+    # NATIVE FORMAT ######################################################
+    reg_socket = context.socket(zmq.REP)
+    reg_socket.bind("%s:%s" % (reg_addr, reg_port))
 
-  # JSON FORMAT ########################################################
-  json_reg_socket = context.socket(zmq.REP)
-  json_reg_socket.bind("%s:%s" % (json_reg_addr,json_reg_port))
+    reg_stream = ZMQStream(reg_socket)
+    reg_stream.on_recv_stream(mon.registerStream)
 
-  json_reg_stream = ZMQStream(json_reg_socket)
-  json_reg_stream.on_recv_stream(mon.registerJSONStream)
+    data_socket = context.socket(zmq.PULL)
+    data_socket.bind("%s:%s" % (data_addr, data_port))
 
-  json_data_socket = context.socket(zmq.PULL)
-  json_data_socket.bind("%s:%s" % (json_data_addr,json_data_port))
+    data_stream = ZMQStream(data_socket)
+    data_stream.on_recv(mon.processDataMsg)
 
-  json_data_stream = ZMQStream(json_data_socket)
-  json_data_stream.on_recv(mon.processJSONDataMsg)
+    # JSON FORMAT ########################################################
+    json_reg_socket = context.socket(zmq.REP)
+    json_reg_socket.bind("%s:%s" % (json_reg_addr, json_reg_port))
 
-  # READ FORMAT ########################################################
-  read_sock = "{}:{}".format(read_addr, read_port)
-  args = (mon, read_sock, context, logger)
-  t = threading.Thread(target=read_worker, args=args)
-  t.daemon = True
-  t.start()
+    json_reg_stream = ZMQStream(json_reg_socket)
+    json_reg_stream.on_recv_stream(mon.registerJSONStream)
 
-  # ALERT FORMAT ########################################################
-  alert_socket = context.socket(zmq.REP)
-  alert_socket.bind("%s:%s" % (alert_addr,alert_port))
+    json_data_socket = context.socket(zmq.PULL)
+    json_data_socket.bind("%s:%s" % (json_data_addr, json_data_port))
 
-  alert_stream = ZMQStream(alert_socket)
-  alert_stream.on_recv(mon.processAlertMsg)
+    json_data_stream = ZMQStream(json_data_socket)
+    json_data_stream.on_recv(mon.processJSONDataMsg)
 
-  #Periodic check for monitoring alerts
-  alerter = ioloop.PeriodicCallback(mon.CheckAlerts, update_period)
-  alerter.start()
+    # READ FORMAT ########################################################
+    read_sock = "{}:{}".format(read_addr, read_port)
+    args = (mon, read_sock, context, logger)
+    t = threading.Thread(target=read_worker, args=args)
+    t.daemon = True
+    t.start()
 
-  logger.info("IOLoop Configured")
+    # ALERT FORMAT ########################################################
+    alert_socket = context.socket(zmq.REP)
+    alert_socket.bind("%s:%s" % (alert_addr, alert_port))
 
-  # Start the event loop
-  ioloop.IOLoop.instance().start()
+    alert_stream = ZMQStream(alert_socket)
+    alert_stream.on_recv(mon.processAlertMsg)
+
+    # Periodic check for monitoring alerts
+    alerter = ioloop.PeriodicCallback(mon.CheckAlerts, update_period)
+    alerter.start()
+
+    logger.info("IOLoop Configured")
+
+    # Start the event loop
+    ioloop.IOLoop.instance().start()
+
 
 if __name__ == "__main__":
-  main()
+    main()

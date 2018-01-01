@@ -312,7 +312,7 @@ class Destination(object):
             result_text: message to return to client
             measurements: processed data, empty dict if error
         """
-       fmtstr =  self.known_streams[stream]["format_str"]
+        fmtstr = self.known_streams[stream]["format_str"]
         try:
             dtuple = struct.unpack_from(fmtstr, measurements)
         except:
@@ -346,7 +346,7 @@ class Destination(object):
         @param start 32b unix timestamp that defines the start of the data
             window
         @param stop 32b unix timestamp that defines the end of the data window
-        @param fields A list that contains the fields for which data is 
+        @param fields A list that contains the fields for which data is
             desired, the value of the dictionary key is arbitrary.
         @return a tuple with (error, data, msg)
             error: 0 for a successful operation
@@ -364,7 +364,7 @@ class Destination(object):
         @param start 32b unix timestamp that defines the start of the data
             window
         @param stop 32b unix timestamp that defines the end of the data window
-        @param fields A list that contains the fields for which data is 
+        @param fields A list that contains the fields for which data is
             desired, the value of the dictionary key is arbitrary.
         @return a tuple with (error, data, msg)
             error: 0 for a successful operation
@@ -374,7 +374,7 @@ class Destination(object):
         """
         try:
             result, stream_data, result_text = self.get_raw_stream_data(
-                stream, 
+                stream,
                 start=start,
                 stop=stop,
                 fields=fields
