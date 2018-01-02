@@ -79,6 +79,7 @@ def poller_loop(sub_addr, queue, log):
             except KeyError:
                 msg = "An unrecognized streamID `{}` was encountered"
                 log.error(msg.format(streamID))
+                log.error(subscriptions)
         except zmq.ZMQError as e:
             if e.errno != zmq.EAGAIN:
                 log.exception("zmq error encountered")

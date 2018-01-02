@@ -81,7 +81,7 @@ class MySQLDestination(Destination):
             " `key_index` INT,"
             " PRIMARY KEY (`id`)"
             # need to add permissions to use REFERENCES command?!?
-            #" FOREIGN KEY (`stream_id`) REFERENCES `origin_streams` (`id`)"
+            # " FOREIGN KEY (`stream_id`) REFERENCES `origin_streams` (`id`)"
             " )"
         )
 
@@ -113,7 +113,7 @@ class MySQLDestination(Destination):
 
             definition = {}
             for field_name, field_type, key_index in cursor:
-                definition[field_name] = {"type":field_type, "key_index":key_index}
+                definition[field_name] = {"type": field_type, "key_index": key_index}
 
             known_stream_versions[name] = definition
             # generate key_order this should probably be nicer
@@ -134,13 +134,13 @@ class MySQLDestination(Destination):
 
             # not including older versions since it is hard right now
             known_streams[name] = {
-                "stream"     : name,
-                "id"         : id,
-                "version"    : version,
-                "key_order"   : key_order,
-                "format_str"  : format_str,
-                "definition" : definition,
-                "versions"   : []
+                "stream": name,
+                "id": id,
+                "version": version,
+                "key_order": key_order,
+                "format_str": format_str,
+                "definition": definition,
+                "versions": []
             }
 
         self.known_stream_versions = known_stream_versions
@@ -164,7 +164,7 @@ class MySQLDestination(Destination):
             query = "UPDATE origin_streams SET version={} WHERE name=\"{}\""
             query = query.format(version, stream)
         cursor.execute(query)
-        #streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
+        # streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
         cursor.execute("SELECT id FROM origin_streams WHERE name=\"{}\" LIMIT 1".format(stream))
         stream_id = cursor.fetchone()[0]
         # overwrite streamID using the correct one
@@ -193,8 +193,8 @@ class MySQLDestination(Destination):
         # make the new data stream table based on the template provided
         query = (
             "CREATE TABLE IF NOT EXISTS `measurements_{}_{}` ("
-            #" `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
-            " `{}` {}," # timestamp field
+            # " `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
+            " `{}` {},"  # timestamp field
         )
         try:
             ts_dtype = data_types[self.config.get("Server", "timestamp_type")]["mysql"]
@@ -206,7 +206,7 @@ class MySQLDestination(Destination):
             f0, f1 = fields[i]
             query += " `{}` {},".format(f0, f1)
         query += "PRIMARY KEY (`{}`))".format(TIMESTAMP)
-        #self.logger.debug(query)
+        # self.logger.debug(query)
         cursor.execute(query)
 
         # update pointer to the current version of the stream if it exists
@@ -238,12 +238,37 @@ class MySQLDestination(Destination):
         version = self.known_streams[stream]["version"]
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
-        #self.logger.debug(query)
-        #self.logger.debug(values)
+        # self.logger.debug(query)
+        # self.logger.debug(values)
         cursor = self.cnx.cursor()
         try:
             cursor.execute(query, values)
-        except IntegrityError:
+        except mysql.connector.IntegrityError:
+            self.exception('Error writing data to mysql server.')
+        self.cnx.commit()
+        cursor.close()
+
+    def insert_measurements(self, stream, version, measurements):
+        measurement_array = []
+        keys = measurements[0].keys()
+        keys.sort()
+        for m in measurements:
+            for k in keys:
+                # make big 1D list
+                measurement_array.append(m[k])
+
+        fmt = "(" + ','.join(keys) + ")"
+        value_placeholders = "(" + ','.join(["%s"]*len(keys)) + ")"
+        value_placeholders = ','.join([value_placeholders]*len(measurements))
+
+        query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
+        query = query.format(stream, version, ''.join(fmt), value_placeholders)
+        # self.logger.debug(query)
+        # self.logger.debug(measurement_array)
+        cursor = self.cnx.cursor()
+        try:
+            cursor.execute(query, measurement_array)
+        except mysql.connector.IntegrityError:
             self.exception('Error writing data to mysql server.')
         self.cnx.commit()
         cursor.close()
@@ -275,7 +300,7 @@ class MySQLDestination(Destination):
             start,
             stop
         )
-        #print query % values
+        # print query % values
         cursor = self.cnx.cursor()
         cursor.execute(query % values)
 
