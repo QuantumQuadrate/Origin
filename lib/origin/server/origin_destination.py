@@ -11,7 +11,6 @@ import multiprocessing
 import Queue
 import time
 import logging
-import sys
 
 from origin.server import template_validation
 from origin.server import measurement_validation
@@ -92,7 +91,6 @@ class Destination(object):
         @param logger pass in a logger object
         @param config configuration object
         """
-
         self.logger = logger
         self.config = config
         self.known_streams = {}
@@ -100,7 +98,15 @@ class Destination(object):
 
         self.connect()
         self.read_stream_def_table()
-        self.start_writer()
+        if self.config.getboolean("Server", "batch_allowed"):
+            self.logger.info("Batched inserts are enabled.")
+            self.start_writer()
+            # Asynchronous insertion of batched measurement
+            self.inserter = self.queue_measurement
+        else:
+            self.logger.info("Batched inserts are disabled.")
+            # Synchronous insertion of a single measurement
+            self.inserter = self.insert_measurement
 
     def connect(self):
         """!@brief Prepare the backend.
@@ -319,8 +325,8 @@ class Destination(object):
         except KeyError:
             measurements[TIMESTAMP] = current_time(self.config)
 
-        # self.insert_measurement(stream, measurements)
-        self.queue_measurement(stream, measurements)
+        # pointer to either queue_measurement or insert_measurement, resolved in __init__
+        self.inserter(stream, measurements)
         result = 0
         result_text = ""
         return (result, result_text, measurements)
@@ -536,7 +542,7 @@ class Destination(object):
         logger = logging.getLogger('write_worker')
         logger.setLevel(logging.DEBUG)
         fh = logging.FileHandler('var/write_worker.log')
-        fh.setLevel(logging.DEBUG)
+        fh.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(name)s = %(levelname)s - %(message)s')
         fh.setFormatter(formatter)
         logger.addHandler(fh)
@@ -562,7 +568,8 @@ class Destination(object):
                             logger.debug('unrecognized stream version: {}({})'.format(d.stream, d.version))
                             stream_data[d.stream][d.version] = []
                         stream_data[d.stream][d.version].append(d.measurements)
-                        logger.debug('stream: {} data length: {}'.format(d.stream, len(stream_data[d.stream][d.version])))
+                        logmsg = 'stream: {} data length: {}'
+                        logger.debug(logmsg.format(d.stream, len(stream_data[d.stream][d.version])))
                         logger.debug('total data messages processed: {}'.format(data_cnt))
                     elif d.type == 'msg':
                         logmsg = 'Write worker recieved command in queue. cmd: {}, msg: {}'
@@ -580,7 +587,8 @@ class Destination(object):
                         if len(stream_data[s][v]) > 0:
                             try:
                                 self.insert_measurements(s, v, stream_data[s][v])
-                                logger.debug('Successfully inserted {} rows into stream: {}'.format(len(stream_data[s][v]), s))
+                                logmsg = 'Successfully inserted {} rows into stream: {}'
+                                logger.info(logmsg.format(len(stream_data[s][v]), s))
                             except:
                                 logger.exception('Unhandled server error encounter in write_worker.')
                                 # TODO: save data in queue that errored to disk

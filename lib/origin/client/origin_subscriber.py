@@ -155,9 +155,9 @@ class Subscriber(reciever.Reciever):
 
         # send subscription info to the poller loop
         cmd = {
-            'action'        : 'SUBSCRIBE',
-            'stream_filter' : stream_filter,
-            'callback'      : callback
+            'action': 'SUBSCRIBE',
+            'stream_filter': stream_filter,
+            'callback': callback
         }
         self.log.info('sending cmd to process: {}'.format(cmd))
         self.queue.put(cmd)
@@ -186,8 +186,8 @@ class Subscriber(reciever.Reciever):
         """
         stream_filter = self.get_stream_filter(stream)
         self.queue.put({
-            'action'        : 'REMOVE_ALL_CBS',
-            'stream_filter' : stream_filter
+            'action': 'REMOVE_ALL_CBS',
+            'stream_filter': stream_filter
         })
 
     def unsubscribe(self, stream):
@@ -200,6 +200,6 @@ class Subscriber(reciever.Reciever):
         """
         stream_filter = self.get_stream_filter(stream)
         self.queue.put({
-            'action'        : 'UNSUBSCRIBE',
-            'stream_filter' : stream_filter
+            'action': 'UNSUBSCRIBE',
+            'stream_filter': stream_filter
         })
