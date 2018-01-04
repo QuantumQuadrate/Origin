@@ -7,3 +7,4 @@ docs/*
 Origin.egg-info/*
 build/*
 dist/*
+*.bak

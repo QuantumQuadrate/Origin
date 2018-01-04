@@ -534,6 +534,7 @@ class Destination(object):
         self.message_counter = 0
         self.insert_queue = multiprocessing.Queue()
         self.writer = multiprocessing.Process(target=self.write_worker, args=(self.insert_queue,))
+        self.writer.daemon = True
         self.writer.start()
         self.logger.info("Destination worker started")
 
@@ -586,9 +587,10 @@ class Destination(object):
                     for v in stream_data[s]:
                         if len(stream_data[s][v]) > 0:
                             try:
-                                self.insert_measurements(s, v, stream_data[s][v])
-                                logmsg = 'Successfully inserted {} rows into stream: {}'
-                                logger.info(logmsg.format(len(stream_data[s][v]), s))
+                                start = time.time()
+                                self.insert_measurements(s, v, stream_data[s][v], logger=logger)
+                                logmsg = 'Successfully inserted {} rows into stream: {}, elasped time: {} s'
+                                logger.info(logmsg.format(len(stream_data[s][v]), s, time.time()-start))
                             except:
                                 logger.exception('Unhandled server error encounter in write_worker.')
                                 # TODO: save data in queue that errored to disk
