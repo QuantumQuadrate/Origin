@@ -4,11 +4,42 @@ This module extends the Destination class to work with a MySQL database.
 
 import sys
 
+from mysql.connector import connection, errorcode
 import mysql.connector
-from mysql.connector import errorcode
 
 from origin.server import Destination
 from origin import data_types, TIMESTAMP
+
+
+class MySQLConnWrapper(connection.MySQLConnection):
+    def execute(self, sql, values=None):
+        try:
+            cursor = self.cursor()
+            cursor.execute(sql, values)
+        except mysql.connector.OperationalError as err:
+            if err.errno == -1:
+                # mysql connection not available
+                self.connect()
+                cursor = self.cursor()
+                cursor.execute(sql, values)
+            else:
+                raise err
+        return cursor
+
+    def execute_list(self, sqls):
+        try:
+            cursor = self.cursor()
+        except mysql.connector.OperationalError as err:
+            if err.errno == -1:
+                # mysql connection not available
+                self.connect()
+                cursor = self.cursor()
+            else:
+                raise err
+
+        for sql in sqls:
+            cursor.execute(sql)
+        return cursor
 
 
 class MySQLDestination(Destination):
@@ -16,10 +47,11 @@ class MySQLDestination(Destination):
 
     def connect(self):
         db = self.config.get("MySQL", "db")
-        self.cnx = mysql.connector.connect(
+        self.cnx = MySQLConnWrapper(
             user=self.config.get("MySQL", "user"),
             password=self.config.get("MySQL", "password"),
-            host=self.config.get("MySQL", "server_ip")
+            host=self.config.get("MySQL", "server_ip"),
+            database=db
         )
 
         try:
@@ -37,11 +69,10 @@ class MySQLDestination(Destination):
     def create_database(self, db=''):
         '''Creates a new database default name comes from the specification in the config file'''
         query = "CREATE DATABASE {} DEFAULT CHARACTER SET 'utf8'"
-        cursor = self.cnx.cursor()
         if db == '':
             db = self.config.get("MySQL", "db")
         try:
-            cursor.execute(query.format(db))
+            cursor = self.cnx.execute(query.format(db))
         except mysql.connector.Error:
             self.logger.exception('Unexpected mysql exception when creating database.')
             self.logger.critical('Could not connect or create database. Stopping...')
@@ -85,15 +116,12 @@ class MySQLDestination(Destination):
             " )"
         )
 
-        cursor = self.cnx.cursor()
-        cursor.execute(stream_creation)
-        cursor.execute(stream_field_creation)
-
         # no json object to read, so we need to build from data
         # could change to store data in a json blob later
         current_stream_versions = []
         query = "SELECT id,name,version from origin_streams"
-        cursor.execute(query)
+        cursor = self.cnx.execute_list([stream_creation, stream_field_creation, query])
+
         for id, name, version in cursor:
             current_stream_versions.append((id, name, version))
             self.logger.debug(current_stream_versions)
@@ -150,7 +178,6 @@ class MySQLDestination(Destination):
         cursor.close()
 
     def create_new_stream_destination(self, stream_obj):
-        cursor = self.cnx.cursor()
         stream = stream_obj["stream"]
         version = stream_obj["version"]
 
@@ -163,7 +190,7 @@ class MySQLDestination(Destination):
             # if we are updating an existing stream, update the row
             query = "UPDATE origin_streams SET version={} WHERE name=\"{}\""
             query = query.format(version, stream)
-        cursor.execute(query)
+        cursor = self.cnx.execute(query)
         # streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
         cursor.execute("SELECT id FROM origin_streams WHERE name=\"{}\" LIMIT 1".format(stream))
         stream_id = cursor.fetchone()[0]
@@ -240,15 +267,14 @@ class MySQLDestination(Destination):
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
         # self.logger.debug(query)
         # self.logger.debug(values)
-        cursor = self.cnx.cursor()
         try:
-            cursor.execute(query, values)
+            cursor = self.cnx.execute(query, values)
         except mysql.connector.IntegrityError:
             self.exception('Error writing data to mysql server.')
         self.cnx.commit()
         cursor.close()
 
-    def insert_measurements(self, stream, version, measurements):
+    def insert_measurements(self, stream, version, measurements, logger=None):
         measurement_array = []
         keys = measurements[0].keys()
         keys.sort()
@@ -263,15 +289,18 @@ class MySQLDestination(Destination):
 
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
-        # self.logger.debug(query)
-        # self.logger.debug(measurement_array)
-        cursor = self.cnx.cursor()
         try:
-            cursor.execute(query, measurement_array)
-        except mysql.connector.IntegrityError:
-            self.exception('Error writing data to mysql server.')
-        self.cnx.commit()
-        cursor.close()
+            cursor = self.cnx.execute(query, measurement_array)
+        except mysql.connector.Error as err:
+            msg = 'Error with mysql server. Error code: {}, msg: {}'.format(err.errno, err)
+            if logger is None:
+                self.logger.exception(msg)
+            else:
+                logger.exception(msg)
+            raise err
+        else:
+            self.cnx.commit()
+            cursor.close()
 
     # read stream data from storage between the timestamps given by time = [start,stop]
     def get_raw_stream_data(self, stream, start=None, stop=None, fields=[]):
@@ -301,8 +330,7 @@ class MySQLDestination(Destination):
             stop
         )
         # print query % values
-        cursor = self.cnx.cursor()
-        cursor.execute(query % values)
+        cursor = self.cnx.execute(query % values)
 
         data = {}
 
