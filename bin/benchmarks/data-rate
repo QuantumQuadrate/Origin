@@ -31,10 +31,11 @@ config.read(configfile)
 from origin.client import server
 from origin import current_time, TIMESTAMP, data_types
 
-N = 10
+N = 1000000
 STREAM_NAME = "datarate_" + config.get('Server', "destination")
 CLIENT_TS = "client_ts"
 SERV_TS = "serv_ts"
+
 
 def sub_worker(config, streamID):
     '''threadable subscriber'''
@@ -54,17 +55,22 @@ def sub_worker(config, streamID):
 
     i = 0
     while i<N:
-        [streamID, content] = sub_socket.recv_multipart()
-        i += 1
-
+        try:
+             [streamID, content] = sub_socket.recv_multipart()
+             i += 1
+        except:
+             logger.exception('No data on subscriber port')
+             logger.info('current N: {}'.format(i))
     sub_socket.close()
+
 
 if __name__ == "__main__":
     serv = server(config)
     # register stream with server
     connection = serv.registerStream(
         stream=STREAM_NAME,
-        records={CLIENT_TS: config.get('Server', "timestamp_type")}
+        records={CLIENT_TS: config.get('Server', "timestamp_type")},
+        timeout=9000
     )
     # subscribe to the stream in another thread
     t = threading.Thread(target=sub_worker, args=(config, connection.streamID))
@@ -76,18 +82,33 @@ if __name__ == "__main__":
 
     for _ in itertools.repeat(None, N):
         data = {CLIENT_TS: current_time(config)}
-        connection.send( **data )
-        # no waiting for data rate
+        try:
+            connection.send( **data )
+        except:
+            # no waiting for data rate
+            print 'waiting for buffer to clear'
+            time.sleep(4)
+            try:
+                print 'resuming'
+                connection.send( **data )
+            except:
+                print "last chance"
+                time.sleep(10)
+                connection.send( **data )
+                print 'recovered'
+
 
     end_ts = current_time(config)
     connection.close()
-    time.sleep(N*0.04)
+    time.sleep(N*0.0004 + 10)
     print("Data in time window: [ {} , {} ]".format(start_ts, end_ts))
 
     host = config.get('Server','ip')
     port = config.get('Server','read_port')
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
+    # a large read could take a qhilw
+    socket.setsockopt(zmq.RCVTIMEO, 60000)
     socket.connect("tcp://%s:%s" % (host,port))
     print "sending read request for stream: `{}`....".format(STREAM_NAME)
     start = long(float(start_ts)/2**32)
