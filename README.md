@@ -22,16 +22,16 @@ The default data storage is h5py.
 
 * python 2.7
 * [pyzmq](http://zeromq.org/bindings:python)
+* [numpy](http://www.numpy.org/)
 
-You then need at least one of these backends
+You then need one of these backends (or none if you are using the filesystem backend)
 * [h5py](http://docs.h5py.org/en/latest/build.html) (default)
 * [mysql.connector](http://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-1.2.3.zip)
 * [pymongo](https://api.mongodb.com/python/current/)
 
 
 ```bash
-sudo apt-get install python-dev
-pip install pyzmq
+pip install pyzmq numpy
 ```
 Then at least one of the following, I recommend h5py:
 ```bash
@@ -72,9 +72,9 @@ mysql -u root -p
 ```
 
 ```sql
-CREATE DATABASE origintest;
+CREATE DATABASE origin_test;
 CREATE USER '_user_'@'localhost' IDENTIFIED BY '_password_';
-GRANT ALL PRIVILEGES ON origintest.* to '_user_'@'localhost';
+GRANT ALL PRIVILEGES ON origin_test.* to '_user_'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
@@ -227,3 +227,13 @@ and the monitoring device:
 ```bash
 python bin/origin-toy-client
 ```
+
+## Possible destinations (backends)
+
+### SQL
+* mapd
+
+### NoSQL
+* Cassandra
+* Riak
+* HBase

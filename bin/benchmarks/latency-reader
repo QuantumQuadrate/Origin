@@ -2,7 +2,10 @@
 
 import sys
 import os
+import random
 import time
+import zmq
+import json
 
 # first find ourself
 fullBinPath  = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
@@ -11,7 +14,8 @@ fullLibPath  = os.path.join(fullBasePath, "lib")
 fullCfgPath  = os.path.join(fullBasePath, "config")
 sys.path.append(fullLibPath)
 
-from origin.client.origin_reader import Reader
+from origin.client import server
+from origin import current_time
 
 if len(sys.argv) > 1:
   if sys.argv[1] == 'test':
@@ -25,21 +29,26 @@ import ConfigParser
 config = ConfigParser.ConfigParser()
 config.read(configfile)
 
-reader = Reader(config)
-stream = 'toy'
+context = zmq.Context()
+socket = context.socket(zmq.REQ)
+host = config.get('Server','ip')
+port = config.get('Server','read_port')
+socket.connect("tcp://%s:%s" % (host,port))
+
+time.sleep(5)
+raw=False
 
 while True:
-    print "sending stat read request...."
+    print "sending read request...."
     start = int(time.time()) - 20 # 20 s of data
-    response = reader.get_stream_stat_data(stream, start=start, fields=['toy1'])
+    request_obj = { 'stream': 'toy', 'field': 'toy1', 'raw': raw, 'start': start}
+    socket.send(json.dumps(request_obj))
+    response = socket.recv()
     print "sever responds with: "
     print response
     print
     time.sleep(10)
-    print "sending raw read request...."
-    start = int(time.time()) - 20 # 20 s of data
-    response = reader.get_stream_raw_data(stream, start=start)
-    print "sever responds with: "
-    print response
-    print
-    time.sleep(10)
+    if raw:
+        raw = False
+    else:
+        raw = True

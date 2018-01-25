@@ -36,7 +36,9 @@ for k in knownStreamVersions:
 print('')
 
 # set default stream to 0 or use specified stream
-stream_filter = sys.argv[1] if len(sys.argv) > 1 else '11'
+stream_name = sys.argv[1] if len(sys.argv) > 1 else 'RB_ROIThresholds'
+
+stream_filter = str(knownStreamVersions[stream_name]["id"])
 
 if stream_filter is None:
     print('no stream specified. stopping ...')

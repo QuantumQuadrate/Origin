@@ -41,11 +41,11 @@ serv = server(config)
 connection = serv.registerStream(
     stream="toy",
     records={
-        "toy1":"float", 
+        "toy1":"float",
         "toy2":"float",
         })
 
-# This might need to be more complicated, but you get the gist. Keep sending records forever    
+# This might need to be more complicated, but you get the gist. Keep sending records forever
 time.sleep(5)
 
 while True:

@@ -22,13 +22,14 @@ import ConfigParser
 config = ConfigParser.ConfigParser()
 config.read(configfile)
 # add base path to config object since we wont know it until we run
-config.set('Server','base_path', fullBasePath) 
+config.set('Server','base_path', fullBasePath)
 config.set('Server','var_path',  fullVarPath)
 
 import argparse
 import time
 import sys
 import logging
+import threading
 
 import zmq
 from zmq.eventloop import ioloop
@@ -46,8 +47,8 @@ import struct
 The :mon:`origin.server.monserver` Module
 ===============================================================================
 
-This module provides the MonServer class that holds all the basic methods for 
-running the monitorig server. 
+This module provides the MonServer class that holds all the basic methods for
+running the monitorig server.
 
 ZMQ IOLoop draws heavily from:
 http://learning-0mq-with-pyzmq.readthedocs.org/en/latest/pyzmq/multisocket/tornadoeventloop.html
@@ -55,7 +56,7 @@ http://learning-0mq-with-pyzmq.readthedocs.org/en/latest/pyzmq/multisocket/torna
 """
 
 class MonServer(object):
-  def __init__(self,logger,config,context):
+  def __init__(self, logger, config):
     self.logger = logger
     self.streamfile = ""
     self.state = "UNKNOWN"
@@ -81,7 +82,7 @@ class MonServer(object):
     elif dest == '':
         logger.critical("No destination specified in configs. Killing server...")
         sys.exit(1)
-        
+
     else:
         logger.critical("Unrecognized destination {} specified. Killing server...".format(dest))
         sys.exit(1)
@@ -90,10 +91,10 @@ class MonServer(object):
     # I cant assign a class method to it, so it is defined here instead
     pub_addr = "tcp://*"
     pub_port = config.getint("Server","pub_port")
-    self.pub_socket = context.socket(zmq.PUB)
+    self.pub_socket = zmq.Context.instance().socket(zmq.PUB)
     self.pub_socket.bind("%s:%s" % (pub_addr,pub_port))
 
-    
+
   ## DATA HANDLER #######################################################
   def processDataMsg(self,msg,format='native'):
     #self.logger.info('data msg recieved...')
@@ -156,7 +157,7 @@ class MonServer(object):
       self.logger.warn("Got a message I can't do anything with. Error: %s Message: %s"%(resultText,msg))
     else:
       self.publish(streamID, meas)
-      
+
   ## REGISTRATION HANDLER ###############################################
   def registerStream(self, reg_stream, msg, format='native'):
     for m in msg:
@@ -200,7 +201,7 @@ class MonServer(object):
         result = 1
         resultText = "Unrecognized registration format `{}` specified".format(format)
         fail = True
-  
+
     except:
       result = 1
       resultText = "Failed to decode message from client"
@@ -213,13 +214,13 @@ class MonServer(object):
 
     if result!=0:
       self.logger.warn("Unable to register stream. Got msg that is badly formatted: %s"%(msg))
-                       
+
     returnMessage = (str(result),resultText)
     reg_stream.send(','.join(returnMessage))
 
   ## ALERT HANDLER ######################################################
   def processAlertMsg(self,alert_stream,msg):
-    #Placeholder for testing alert messages 
+    #Placeholder for testing alert messages
     try:
       messageDecoded = json.loads(msg)
     except ValueError:
@@ -228,41 +229,33 @@ class MonServer(object):
       fail = True
     if not fail:
       self.logger.info("Received alert message")
-      
+
     returnMessage = [result,resultText]
     alert_stream.send(json.dumps(returnMessage))
 
-  def CheckAlerts(self): 
-    # Do Something to sim checking 
+  def CheckAlerts(self):
+    # Do Something to sim checking
     # Will drop in full alert chain after testing
     list = range(200)
     for l in list:
       d = l*l
-       
-  ## READ REQUEST HANDLER ################################################
-  def processReadMsg(self,read_stream,msg):
-    for m in msg:
-      if m != '':
-        self.processSingleReadMsg(read_stream,m)
 
-  def processSingleReadMsg(self, read_stream, msg):
+  ## READ REQUEST HANDLER ################################################
+
+  def processSingleReadMsg(self, msg):
     # if msg is an empty JSON object then send back the list of known streams
     # this is used for subscriptions
     if msg == '{}':
-        result, resultText = (0, dict(streams=self.dest.known_streams))
-        returnMessage = (result,resultText)
-        read_stream.send(json.dumps(returnMessage))
-        return
+        return (0, dict(streams=self.dest.known_streams))
 
+    result = 1 # error flag should be cleared during measurement
     try:
       request_obj = json.loads(msg)
       stream = request_obj['stream'].strip()
     except ValueError:
-      result = 1
-      resultText = dict(streams=self.dest.known_streams, error="Failed to decode request.")
+      data = dict(streams=self.dest.known_streams, error="Failed to decode request.")
     except KeyError:
-      result = 1
-      resultText = dict(streams=self.dest.known_streams, error="Request did not have stream property.")
+      data = dict(streams=self.dest.known_streams, error="Request did not have stream property.")
     else:
       if 'start' in request_obj:
         start = request_obj['start']
@@ -273,23 +266,29 @@ class MonServer(object):
       else:
         stop = None
 
-      result = 1 # error flag should be cleared during measurement
       try:
-        if 'field' in request_obj:
-          field = request_obj['field'].strip()
-          self.logger.debug("Read request for stream `{}.{}` recieved.".format(stream,field))
-          if ('raw' in request_obj) and request_obj['raw']:
-            self.logger.debug("Raw data requested.")
-            result, data, resultText = self.dest.get_raw_stream_field_data(stream,field,start,stop)
-          else:
-            result, data, resultText = self.dest.get_stat_stream_field_data(stream,field,start,stop)
+        if 'fields' in request_obj:
+          # expecting a list of fields
+          fields = [ f.strip() for f in request_obj['fields'] ]
         else:
-          self.logger.debug("Read request for stream `{}` recieved.".format(stream))
-          if ('raw' in request_obj) and request_obj['raw']:
-            self.logger.debug("Raw data requested.")
-            result, data, resultText = self.dest.get_raw_stream_data(stream,start,stop)
-          else:
-            result, data, resultText = self.dest.get_stat_stream_data(stream,start,stop)
+          # get all fields
+          fields = []
+        self.logger.debug("Read request for stream `{}.{}` recieved.".format(stream,fields))
+        if ('raw' in request_obj) and request_obj['raw']:
+          self.logger.debug("Raw data requested.")
+          result, data, resultText = self.dest.get_raw_stream_data(
+                stream,
+                fields=fields,
+                start=start,
+                stop=stop
+          )
+        else:
+          result, data, resultText = self.dest.get_stat_stream_data(
+                stream,
+                fields=fields,
+                start=start,
+                stop=stop
+          )
 
       except Exception:
         self.logger.exception("Unexpected exception in read message code:")
@@ -300,8 +299,7 @@ class MonServer(object):
         data = dict(stream=self.dest.known_streams, error=resultText)
 
     finally:
-      returnMessage = (result, data)
-      read_stream.send(json.dumps(returnMessage))
+      return (result, data)
 
     ## STREAMING PUBLISHER #################################################
   def publish(self, streamID, data):
@@ -309,14 +307,25 @@ class MonServer(object):
     self.logger.debug("Sending data: " + str(msg))
     self.pub_socket.send_multipart(msg)
 
+# READ FORMAT ########################################################
+def read_worker(mon, addr, context, logger):
+  '''threadable worker class so long read operations dont block other sockets'''
+  logger.info("read_worker thread started.  Waiting for read requests...")
+
+  read_socket = context.socket(zmq.REP)
+  read_socket.bind(addr)
+
+  while True:
+      message = read_socket.recv()
+      read_socket.send_json(mon.processSingleReadMsg(message))
 
 def main():
   if not os.path.exists(fullVarPath):
     os.mkdir(fullVarPath)
 
   #  parser = argparse.ArgumentParser(description='Lightweight Monitoring Server for HAWC')
-  
-  # parser.add_argument('-c','--config', type=str, default="site", 
+
+  # parser.add_argument('-c','--config', type=str, default="site",
   #                     help='configuration bundle (site,test)')
   # parser.add_argument('-l', '--logfile', type=str, default="%s/ORIGIN.log"%(fullVarPath),
   #                  help='LogFile location')
@@ -326,11 +335,11 @@ def main():
   #                  help='Console verbosity: DEBUG, INFO, WARNING, ERROR, CRITICAL')
 
   # args = parser.parse_args()
-  
+
   logger = logging.getLogger('Monitor')
   logger.setLevel(logging.INFO)
 
-  # Add Console logger 
+  # Add Console logger
   cLog = logging.StreamHandler()
   cLog.setLevel("INFO")
   formatter = logging.Formatter('%(levelname)s - %(message)s')
@@ -342,7 +351,7 @@ def main():
   fLog.setLevel("DEBUG")
   formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
   fLog.setFormatter(formatter)
-  logger.addHandler(fLog)  
+  logger.addHandler(fLog)
   logger.info("Successfully Started Logging")
 
   logger.info("Current directory: {}".format(os.getcwd()))
@@ -369,10 +378,10 @@ def main():
   update_period = config.getint("Server","alert_check_period")*1e3
 
   context = zmq.Context.instance()
-  
+
   # Setup Server
-  mon = MonServer(logger,config,context)
-  
+  mon = MonServer(logger, config)
+
   # NATIVE FORMAT ######################################################
   reg_socket = context.socket(zmq.REP)
   reg_socket.bind("%s:%s" % (reg_addr,reg_port))
@@ -400,11 +409,11 @@ def main():
   json_data_stream.on_recv(mon.processJSONDataMsg)
 
   # READ FORMAT ########################################################
-  read_socket = context.socket(zmq.REP)
-  read_socket.bind("%s:%s" % (read_addr,read_port))
-
-  read_stream = ZMQStream(read_socket)
-  read_stream.on_recv_stream(mon.processReadMsg)
+  read_sock = "{}:{}".format(read_addr, read_port)
+  args = (mon, read_sock, context, logger)
+  t = threading.Thread(target=read_worker, args=args)
+  t.daemon = True
+  t.start()
 
   # ALERT FORMAT ########################################################
   alert_socket = context.socket(zmq.REP)
@@ -419,9 +428,8 @@ def main():
 
   logger.info("IOLoop Configured")
 
-  # Start the event loop 
+  # Start the event loop
   ioloop.IOLoop.instance().start()
 
 if __name__ == "__main__":
   main()
-

@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+'''latency_sub sends a data stream with no timestamp where the data is the
+client timestamp. The server will timestamp the data when it comes in, and then
+send to a subscriber, started in a new thread.
+The subscriber packages the data up and sends it to the server.
+'''
+
+import sys
+import json
+import threading
+import itertools
+import zmq
+import os.path
+import time
+import logging
+import numpy as np
+
+# first find ourselves
+fullBinPath  = os.path.join(os.getcwd(), sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(fullBinPath))))
+fullLibPath  = os.path.join(fullBasePath, "lib")
+fullCfgPath  = os.path.join(fullBasePath, "config")
+sys.path.append(fullLibPath)
+print(fullBasePath)
+
+configfile = os.path.join(fullCfgPath, "latency-test.cfg")
+
+import ConfigParser
+config = ConfigParser.ConfigParser()
+config.read(configfile)
+
+from origin.client import server
+from origin import current_time, TIMESTAMP, data_types
+
+N = 10**4
+STREAM_NAME = "latency_" + config.get('Server', "destination")
+CLIENT_TS = "client_ts"
+SUB_STREAM_NAME = "latency_sub_" + config.get('Server', "destination")
+SUB_TS = "sub_ts"
+SERV_TS = "serv_ts"
+DELAY_TIME = 0.1
+
+def sub_worker(config, streamID):
+    '''threadable subscriber'''
+    logging.warning("sub_worker thread started.  Waiting for pushed data...")
+    context = zmq.Context()
+    sub_socket = context.socket(zmq.SUB)
+    sub_socket.connect("tcp://{}:{}".format(
+        config.get('Server', "ip"),
+        config.get('Server', "pub_port")
+    ))
+    # subscribe to the data stream
+    stream_filter = str(streamID).zfill(4)
+    # ascii to unicode str
+    if isinstance(stream_filter, bytes):
+      stream_filter = stream_filter.decode('ascii')
+    sub_socket.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
+
+    serv = server(config)
+    # register stream with server
+    connection = serv.registerStream(
+        stream=SUB_STREAM_NAME,
+        records={
+            SERV_TS: config.get('Server', "timestamp_type"),
+            SUB_TS: config.get('Server', "timestamp_type")
+        }
+    )
+
+    i = 0
+    while i<N:
+        [streamID, content] = sub_socket.recv_multipart()
+        sub_ts = long(time.time()*2**32)
+        p_data = json.loads(content)
+        data = {
+            TIMESTAMP: p_data[CLIENT_TS],
+            SUB_TS: sub_ts,
+            SERV_TS: p_data[TIMESTAMP]
+        }
+        connection.send(**data)
+        if i % 1000 == 0:
+            logging.warning('i: {}'.format(i))
+        i += 1
+    logging.warning('All data recieved. Closing worker thread...')
+    sub_socket.close()
+
+if __name__ == "__main__":
+    serv = server(config)
+    # register stream with server
+    connection = serv.registerStream(
+        stream=STREAM_NAME,
+        records={CLIENT_TS: config.get('Server', "timestamp_type")}
+    )
+    # subscribe to the stream in another thread
+    t = threading.Thread(target=sub_worker, args=(config, connection.streamID))
+    t.daemon = True
+    t.start()
+    # wait for the other thread to get its sh?t together
+    time.sleep(5)
+    start_ts = current_time(config)
+
+    for _ in itertools.repeat(None, N):
+        data = {CLIENT_TS: current_time(config)}
+        connection.send( **data )
+        time.sleep(0.1) # wait long enough that the last data set shold be completed
+
+    end_ts = current_time(config)
+    connection.close()
+    time.sleep(10)
+    print("Data in time window: [ {} , {} ]".format(start_ts, end_ts))
+
+    host = config.get('Server','ip')
+    port = config.get('Server','read_port')
+    context = zmq.Context()
+    socket = context.socket(zmq.REQ)
+    socket.connect("tcp://%s:%s" % (host,port))
+    print "sending read request for stream: `{}`....".format(SUB_STREAM_NAME)
+    start = long(float(start_ts)/2**32)
+    request_obj = { 'stream': SUB_STREAM_NAME, 'raw': True, 'start': start}
+
+    socket.send(json.dumps(request_obj))
+    response = json.loads(socket.recv())[1]
+    socket.close()
+
+    d_len = len(response[TIMESTAMP])
+    print "sever responds with: {} data".format(d_len)
+    fn = '-'.join([SUB_STREAM_NAME, str(start)])+'.json'
+    print "saving data to file: `{}`".format(fn)
+    with open(fn, 'w') as outfile:
+        json.dump(response, outfile)
+
+    dt_sec = float(max(response[TIMESTAMP]) - min(response[TIMESTAMP]))/2**32
+    d_rate = float(d_len)/dt_sec
+    print "client data production rate: {} 1/s".format(d_rate)
+
+    client_ts = np.array(response[TIMESTAMP])
+    server_ts = np.subtract(np.array(response[SERV_TS]), client_ts)
+    sub_ts = np.subtract(np.array(response[SUB_TS]), client_ts)
+
+    to_ms = 1000.0/2**32
+    server_lat = [np.mean(server_ts)*to_ms, np.std(server_ts)*to_ms]
+    sub_lat = [np.mean(sub_ts)*to_ms, np.std(sub_ts)*to_ms]
+    print "server arrival latency: {}({}) ms".format(*server_lat)
+    print "sub arrival latency: {}({}) ms".format(*sub_lat)

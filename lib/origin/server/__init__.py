@@ -12,5 +12,5 @@ from origin.server.origin_destination import Destination
 # if you dont want to install these modules then just comment the ones you dont want to use
 from origin.server.origin_hdf5_destination import HDF5Destination
 #from origin.server.origin_mysql_destination import MySQLDestination
-from origin.server.origin_filesystem_destination import FilesystemDestination
+#from origin.server.origin_filesystem_destination import FilesystemDestination
 #from origin.server.origin_mongodb_destination import MongoDBDestination

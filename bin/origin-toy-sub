@@ -9,7 +9,10 @@ print('starting')
 context = zmq.Context()
 
 info_socket = context.socket(zmq.REQ)
-info_socket.connect("tcp://hexlabmonitor.physics.wisc.edu:5561")
+info_socket.RCVTIMEO = 2000
+host = "localhost"
+host = "hexlabmonitor.physics.wisc.edu"
+info_socket.connect("tcp://{}:5561".format(host))
 print("Asking server for a list of available streams")
 info_socket.send('{}')
 response = json.loads(info_socket.recv())
@@ -37,30 +40,53 @@ if stream_filter is None:
   print('no stream specified. stopping ...')
   sys.exit(0)
 
-sub_socket = context.socket(zmq.SUB)
+# first find ourself
+fullBinPath  = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullLibPath  = os.path.join(fullBasePath, "lib")
+fullCfgPath  = os.path.join(fullBasePath, "config")
+sys.path.append(fullLibPath)
 
-print("Collecting updates from data server...")
-sub_socket.connect("tcp://hexlabmonitor.physics.wisc.edu:5562")
+from origin.client.origin_subscriber import Subscriber
 
-for sub_stream in knownStreamVersions.keys():
-  if knownStreamVersions[sub_stream]["id"] == int(stream_filter):
-    break
+if len(sys.argv) > 1:
+  if sys.argv[1] == 'test':
+    configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+  else:
+    configfile = os.path.join(fullCfgPath, sys.argv[1])
+else:
+  configfile = os.path.join(fullCfgPath, "origin-server.cfg")
 
-stream_filter = stream_filter.zfill(4)
-print("subscribing to stream: %s [%s]" % (sub_stream, stream_filter) )
+config = ConfigParser.ConfigParser()
+config.read(configfile)
 
-# ascii to unicode str
-if isinstance(stream_filter, bytes):
-  stream_filter = stream_filter.decode('ascii')
-sub_socket.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
+# define a custom function to pass to the poller loop
+# MUST BE DEFINED BEFORE SUBSCRIBER INSTANTIATION
+def thermistor_print(stream_id, data, log):
+    # convert temp from mC to C
+    TempC = float(data['c0']) * 1.0E-3
+    log.info("[{}]: {} C".format(stream_id, TempC))
+
+sub = Subscriber(config, logger)
+
+logger.info("streams")
+print('')
+pprint.pprint(sub.known_streams.keys())
+
+stream = raw_input("stream to subscribe to: ")
+
+if not stream in sub.known_streams:
+    print("stream not recognized")
+    sub.close()
+    sys.exit(1)
+
+print("subscribing to stream: %s" % (stream,) )
+sub.subscribe(stream)
+sub.subscribe(stream, callback=thermistor_print)
 
 try:
-  while True:
-    [streamID, content] = sub_socket.recv_multipart()
-    data = json.loads(content)
-    print("[%s] %s" % (streamID, data))
+    while True:
+        time.sleep(0.5)
 except KeyboardInterrupt:
-  print("closing...")
-
-sub_socket.close()
-context.term()
+    sub.close()
+    logger.info('closing')

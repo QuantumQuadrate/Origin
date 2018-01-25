@@ -21,7 +21,7 @@ class MySQLDestination(Destination):
             password=self.config.get("MySQL", "password"),
             host=self.config.get("MySQL", "server_ip")
         )
-        self.cursor = self.cnx.cursor()
+
         try:
             self.cnx.database = db
         except mysql.connector.Error as err:
@@ -33,28 +33,32 @@ class MySQLDestination(Destination):
                 self.logger.exception('Unexpected mysql exception when connecting to database.')
         except Exception:
             self.logger.exception('Unexpected exception when connecting to database.')
-            
+
     def create_database(self, db=''):
         '''Creates a new database default name comes from the specification in the config file'''
         query = "CREATE DATABASE {} DEFAULT CHARACTER SET 'utf8'"
+        cursor = self.cnx.cursor()
         if db == '':
             db = self.config.get("MySQL", "db")
         try:
-            self.cursor.execute(query.format(db))
+            cursor.execute(query.format(db))
         except mysql.connector.Error:
             self.logger.exception('Unexpected mysql exception when creating database.')
             self.logger.critical('Could not connect or create database. Stopping...')
+            cursor.close()
             sys.exit(1)
         except Exception:
             self.logger.exception('Unexpected exception when creating database.')
             self.logger.critical('Could not connect or create database. Stopping...')
+            cursor.close()
             sys.exit(1)
+        cursor.close()
 
     def close(self):
-        self.cursor.close()
         self.cnx.close()
 
     def read_stream_def_table(self):
+        # make a table for the list of streams
         stream_creation = (
             "CREATE TABLE IF NOT EXISTS `origin_streams` ( "
             " `id` INT NOT NULL AUTO_INCREMENT,"
@@ -64,6 +68,7 @@ class MySQLDestination(Destination):
             " ) "
         )
 
+        # make a table for all the stream fields
         stream_field_creation = (
             "CREATE TABLE IF NOT EXISTS"
             " `origin_stream_fields` ("
@@ -80,7 +85,7 @@ class MySQLDestination(Destination):
             " )"
         )
 
-        cursor = self.cursor
+        cursor = self.cnx.cursor()
         cursor.execute(stream_creation)
         cursor.execute(stream_field_creation)
 
@@ -98,7 +103,7 @@ class MySQLDestination(Destination):
 
         for id, name, version in current_stream_versions:
             query = (
-                "SELECT field_name,field_type,key_index" 
+                "SELECT field_name,field_type,key_index"
                 " FROM origin_stream_fields"
                 " WHERE stream_id = {} and version = {}"
             ).format(id, version)
@@ -130,21 +135,22 @@ class MySQLDestination(Destination):
             # not including older versions since it is hard right now
             known_streams[name] = {
                 "stream"     : name,
-                "id"         : id, 
-                "version"    : version, 
-                "key_order"   : key_order, 
+                "id"         : id,
+                "version"    : version,
+                "key_order"   : key_order,
                 "format_str"  : format_str,
                 "definition" : definition,
                 "versions"   : []
             }
-            
+
         self.known_stream_versions = known_stream_versions
         self.known_streams = known_streams
         self.print_stream_info()
         self.cnx.commit()
+        cursor.close()
 
     def create_new_stream_destination(self, stream_obj):
-        cursor = self.cursor
+        cursor = self.cnx.cursor()
         stream = stream_obj["stream"]
         version = stream_obj["version"]
 
@@ -156,7 +162,7 @@ class MySQLDestination(Destination):
         else:
             # if we are updating an existing stream, update the row
             query = "UPDATE origin_streams SET version={} WHERE name=\"{}\""
-            query = query.format(version, stream) 
+            query = query.format(version, stream)
         cursor.execute(query)
         #streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
         cursor.execute("SELECT id FROM origin_streams WHERE name=\"{}\" LIMIT 1".format(stream))
@@ -187,7 +193,7 @@ class MySQLDestination(Destination):
         # make the new data stream table based on the template provided
         query = (
             "CREATE TABLE IF NOT EXISTS `measurements_{}_{}` ("
-            " `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
+            #" `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
             " `{}` {}," # timestamp field
         )
         try:
@@ -199,17 +205,18 @@ class MySQLDestination(Destination):
         for i in range(0, len(fields)):
             f0, f1 = fields[i]
             query += " `{}` {},".format(f0, f1)
-        query += "PRIMARY KEY (`id`))"
+        query += "PRIMARY KEY (`{}`))".format(TIMESTAMP)
         #self.logger.debug(query)
         cursor.execute(query)
 
         # update pointer to the current version of the stream if it exists
         query = "DROP VIEW IF EXISTS measurements_{} ".format(stream)
         cursor.execute(query)
-        query = """CREATE VIEW measurements_{} 
+        query = """CREATE VIEW measurements_{}
                 AS SELECT * FROM measurements_{}_{}""".format(stream, stream, version)
         cursor.execute(query)
         self.cnx.commit()
+        cursor.close()
         # should we close the cursor here?
         return stream_id
 
@@ -231,56 +238,62 @@ class MySQLDestination(Destination):
         version = self.known_streams[stream]["version"]
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
-        self.logger.debug(query)
-        self.logger.debug(values)
-        self.cursor.execute(query, values)
+        #self.logger.debug(query)
+        #self.logger.debug(values)
+        cursor = self.cnx.cursor()
+        try:
+            cursor.execute(query, values)
+        except IntegrityError:
+            self.exception('Error writing data to mysql server.')
         self.cnx.commit()
+        cursor.close()
 
     # read stream data from storage between the timestamps given by time = [start,stop]
-    def get_raw_stream_data(self, stream, start=None, stop=None, definition=None):
+    def get_raw_stream_data(self, stream, start=None, stop=None, fields=[]):
         start, stop = self.validate_time_range(start, stop)
 
         if stream not in self.known_streams:
             msg = "Requested stream `{}` does not exist.".format(stream)
             return (1, {}, msg)
 
-        if definition is None:
-            definition = self.known_stream_versions[stream]
+        if fields == []:
+            fields = self.known_stream_versions[stream].keys()
         else:
             # check that the requestd fields are all in the stream defintion
-            for f in definition:
+            for f in fields:
                 if f not in self.known_stream_versions[stream]:
                     msg = "Requested stream field `{}.{}` does not exist.".format(stream, f)
                     return (1, {}, msg)
-        
-        field_list = [field for field in definition]
-        field_list.append(TIMESTAMP)
+
+        fields.append(TIMESTAMP)
         query = "SELECT %s FROM measurements_%s_%d WHERE %s BETWEEN %d AND %d"
         values = (
-            ",".join(field_list),
-            stream, 
-            self.known_streams[stream]["version"], 
-            TIMESTAMP, 
-            start, 
+            ",".join(fields),
+            stream,
+            self.known_streams[stream]["version"],
+            TIMESTAMP,
+            start,
             stop
         )
         #print query % values
-        self.cursor.execute(query % values)
+        cursor = self.cnx.cursor()
+        cursor.execute(query % values)
 
         data = {}
 
-        for field in field_list:
+        for field in fields:
             data[field] = []
 
-        results = self.cursor.fetchall()
+        results = cursor.fetchall()
 
         err = 0
-        if self.cursor.rowcount <= 0:
+        if cursor.rowcount <= 0:
             msg = "Stream declared, but no data saved."
             err = 1
+        cursor.close()
 
         for row in results:
-            for i, field in enumerate(field_list):
+            for i, field in enumerate(fields):
                 data[field].append(row[i])
         if err == 0:
             return (0, data, '')
