@@ -34,9 +34,10 @@ config.read(configfile)
 def get_ule_state():
     im = Image.open('/dev/shm/mjpeg/cam.jpg').convert('L')
     stat = ImageStat.Stat(im)
-    total = stat.mean[0]-22.8# subtract background
+    bg=17
+    total = stat.mean[0]-bg# subtract background
     locked = 0
-    if( total > 7):
+    if( total > 5):
         locked = 1
     return (total,locked)
 
@@ -46,6 +47,13 @@ def get_piezovoltage(serialdevice):
     word=response.split()[-1] # breakdown the reply into multiple words, and pick the last one that contains voltage readings
     voltage=float(word[0:-1])
     return voltage
+
+def set_piezovoltage(serialdevice,set_voltage):
+    if set_voltage>0 and set_voltage<150:
+      serialdevice.write("XV{}\r\n".format(set_voltage))
+      response=serialdevice.readline()
+      print response
+      print "setting voltage to {} V".format(set_voltage)
 
 def get_piezostate(setpoint,tolerance,reading):
   #if setpoint<0 or setpoint>150:
@@ -59,14 +67,15 @@ def get_piezostate(setpoint,tolerance,reading):
 # might need arguments.... idk
 serv = server(config)
 
-
 # alert the server that we are going to be sending this type of data
 print "registering stream..."
 connection = serv.registerStream(
   stream="ULETrans960",
   records={
   "trans":"float",
-  "lock":"uint8"
+  "lock":"uint8",
+  "cavitymode":"uint8",
+  "piezovoltage":"float"
 })
 print "success"
 
@@ -122,6 +131,7 @@ while True:
             piezovoltage=get_piezovoltage(ser)
             piezoState_now=get_piezostate(setpoint,tolerance,piezovoltage)
             print "piezovoltage is at {}, setpoint was {}".format(piezovoltage,setpoint)
+            #set_piezovoltage(ser,setpoint)
             print time.strftime("%Y-%m-%d %H:%M")
             if(lastLock>0):
                 print "uptime: {} hours".format((ts-lastLock)/(3600*2**32))
@@ -136,6 +146,7 @@ while True:
             lastLock = ts
             piezovoltage=get_piezovoltage(ser)
             piezoState_now=get_piezostate(setpoint,tolerance,piezovoltage)
+            #set_piezovoltage(ser,setpoint)
             print ""
             print "*"*60
             print "960 Laser Lock Acquired."
