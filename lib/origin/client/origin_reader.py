@@ -43,9 +43,9 @@ class Reader(reciever.Reciever):
 
         request = {
             'stream': stream.strip(),
-            'start' : start,
-            'stop'  : stop,
-            'raw'   : raw,
+            'start': start,
+            'stop': stop,
+            'raw': raw,
         }
         if fields != []:
             if self.is_fields(stream, fields):

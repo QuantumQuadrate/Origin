@@ -3,3 +3,8 @@ var/*
 *.swp
 venv/*
 docs/*
+*/Origin.egg-info/*
+Origin.egg-info/*
+build/*
+dist/*
+*.bak

@@ -1,71 +1,48 @@
 #!/usr/bin/env python
 
 import sys
-import zmq
-import json
-
-print('starting')
-
-context = zmq.Context()
-
-info_socket = context.socket(zmq.REQ)
-info_socket.RCVTIMEO = 2000
-host = "localhost"
-host = "hexlabmonitor.physics.wisc.edu"
-info_socket.connect("tcp://{}:5561".format(host))
-print("Asking server for a list of available streams")
-info_socket.send('{}')
-response = json.loads(info_socket.recv())
-info_socket.close()
-
-if response[0] != 0:
-  print('Server not happy. stopping ...')
-  print response
-  print response[0]
-  sys.exit(1)
-
-print("Server responds with...")
-knownStreamVersions = response[1]["streams"]
-for k in knownStreamVersions:
-  print 'stream: ', k, ',\tstreamID: ', knownStreamVersions[k]["id"]
-
-#print(response)
-print('')
-
-# set default stream to 0 or use specified stream
-stream_filter = sys.argv[1] if len(sys.argv) > 1 else None
-
-
-if stream_filter is None:
-  print('no stream specified. stopping ...')
-  sys.exit(0)
-
-# first find ourself
-fullBinPath  = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
-fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
-fullLibPath  = os.path.join(fullBasePath, "lib")
-fullCfgPath  = os.path.join(fullBasePath, "config")
-sys.path.append(fullLibPath)
-
+import os.path
+import ConfigParser
+import pprint
+import logging
+import time
 from origin.client.origin_subscriber import Subscriber
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+# first find ourself
+fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullCfgPath = os.path.join(fullBasePath, "config")
+
 if len(sys.argv) > 1:
-  if sys.argv[1] == 'test':
-    configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
-  else:
-    configfile = os.path.join(fullCfgPath, sys.argv[1])
+    if sys.argv[1] == 'test':
+        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+    else:
+        configfile = os.path.join(fullCfgPath, sys.argv[1])
 else:
-  configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
 
 config = ConfigParser.ConfigParser()
 config.read(configfile)
+
 
 # define a custom function to pass to the poller loop
 # MUST BE DEFINED BEFORE SUBSCRIBER INSTANTIATION
 def thermistor_print(stream_id, data, log):
     # convert temp from mC to C
-    TempC = float(data['c0']) * 1.0E-3
-    log.info("[{}]: {} C".format(stream_id, TempC))
+    try:
+        TempC = float(data['c0']) * 1.0E-3
+        log.info("[{}]: {} C".format(stream_id, TempC))
+    except KeyError:
+        log.error('Problem accessing key `c0`. Are you subscribed to the right stream?')
+
 
 sub = Subscriber(config, logger)
 
@@ -75,12 +52,12 @@ pprint.pprint(sub.known_streams.keys())
 
 stream = raw_input("stream to subscribe to: ")
 
-if not stream in sub.known_streams:
+if stream not in sub.known_streams:
     print("stream not recognized")
     sub.close()
     sys.exit(1)
 
-print("subscribing to stream: %s" % (stream,) )
+print("subscribing to stream: %s" % (stream,))
 sub.subscribe(stream)
 sub.subscribe(stream, callback=thermistor_print)
 

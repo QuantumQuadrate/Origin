@@ -3,41 +3,47 @@
 import sys
 import os
 import time
-
-# first find ourself
-fullBinPath  = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
-fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
-fullLibPath  = os.path.join(fullBasePath, "lib")
-fullCfgPath  = os.path.join(fullBasePath, "config")
-sys.path.append(fullLibPath)
-
+import ConfigParser
+import logging
 from origin.client.origin_reader import Reader
 
-if len(sys.argv) > 1:
-  if sys.argv[1] == 'test':
-    configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
-  else:
-    configfile = os.path.join(fullCfgPath, sys.argv[1])
-else:
-  configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+# first find ourself
+fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullCfgPath = os.path.join(fullBasePath, "config")
 
-import ConfigParser
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+if len(sys.argv) > 1:
+    if sys.argv[1] == 'test':
+        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+    else:
+        configfile = os.path.join(fullCfgPath, sys.argv[1])
+else:
+    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+
 config = ConfigParser.ConfigParser()
 config.read(configfile)
 
-reader = Reader(config)
+reader = Reader(config, logger)
 stream = 'toy'
 
 while True:
     print "sending stat read request...."
-    start = int(time.time()) - 20 # 20 s of data
+    start = int(time.time()) - 20  # 20 s of data
     response = reader.get_stream_stat_data(stream, start=start, fields=['toy1'])
     print "sever responds with: "
     print response
     print
     time.sleep(10)
     print "sending raw read request...."
-    start = int(time.time()) - 20 # 20 s of data
+    start = int(time.time()) - 20  # 20 s of data
     response = reader.get_stream_raw_data(stream, start=start)
     print "sever responds with: "
     print response

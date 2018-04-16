@@ -4,11 +4,42 @@ This module extends the Destination class to work with a MySQL database.
 
 import sys
 
+from mysql.connector import connection, errorcode
 import mysql.connector
-from mysql.connector import errorcode
 
 from origin.server import Destination
 from origin import data_types, TIMESTAMP
+
+
+class MySQLConnWrapper(connection.MySQLConnection):
+    def execute(self, sql, values=None):
+        try:
+            cursor = self.cursor()
+            cursor.execute(sql, values)
+        except mysql.connector.OperationalError as err:
+            if err.errno == -1:
+                # mysql connection not available
+                self.connect()
+                cursor = self.cursor()
+                cursor.execute(sql, values)
+            else:
+                raise err
+        return cursor
+
+    def execute_list(self, sqls):
+        try:
+            cursor = self.cursor()
+        except mysql.connector.OperationalError as err:
+            if err.errno == -1:
+                # mysql connection not available
+                self.connect()
+                cursor = self.cursor()
+            else:
+                raise err
+
+        for sql in sqls:
+            cursor.execute(sql)
+        return cursor
 
 
 class MySQLDestination(Destination):
@@ -16,10 +47,11 @@ class MySQLDestination(Destination):
 
     def connect(self):
         db = self.config.get("MySQL", "db")
-        self.cnx = mysql.connector.connect(
+        self.cnx = MySQLConnWrapper(
             user=self.config.get("MySQL", "user"),
             password=self.config.get("MySQL", "password"),
-            host=self.config.get("MySQL", "server_ip")
+            host=self.config.get("MySQL", "server_ip"),
+            database=db
         )
 
         try:
@@ -37,11 +69,10 @@ class MySQLDestination(Destination):
     def create_database(self, db=''):
         '''Creates a new database default name comes from the specification in the config file'''
         query = "CREATE DATABASE {} DEFAULT CHARACTER SET 'utf8'"
-        cursor = self.cnx.cursor()
         if db == '':
             db = self.config.get("MySQL", "db")
         try:
-            cursor.execute(query.format(db))
+            cursor = self.cnx.execute(query.format(db))
         except mysql.connector.Error:
             self.logger.exception('Unexpected mysql exception when creating database.')
             self.logger.critical('Could not connect or create database. Stopping...')
@@ -81,19 +112,16 @@ class MySQLDestination(Destination):
             " `key_index` INT,"
             " PRIMARY KEY (`id`)"
             # need to add permissions to use REFERENCES command?!?
-            #" FOREIGN KEY (`stream_id`) REFERENCES `origin_streams` (`id`)"
+            # " FOREIGN KEY (`stream_id`) REFERENCES `origin_streams` (`id`)"
             " )"
         )
-
-        cursor = self.cnx.cursor()
-        cursor.execute(stream_creation)
-        cursor.execute(stream_field_creation)
 
         # no json object to read, so we need to build from data
         # could change to store data in a json blob later
         current_stream_versions = []
         query = "SELECT id,name,version from origin_streams"
-        cursor.execute(query)
+        cursor = self.cnx.execute_list([stream_creation, stream_field_creation, query])
+
         for id, name, version in cursor:
             current_stream_versions.append((id, name, version))
             self.logger.debug(current_stream_versions)
@@ -113,7 +141,7 @@ class MySQLDestination(Destination):
 
             definition = {}
             for field_name, field_type, key_index in cursor:
-                definition[field_name] = {"type":field_type, "key_index":key_index}
+                definition[field_name] = {"type": field_type, "key_index": key_index}
 
             known_stream_versions[name] = definition
             # generate key_order this should probably be nicer
@@ -134,13 +162,13 @@ class MySQLDestination(Destination):
 
             # not including older versions since it is hard right now
             known_streams[name] = {
-                "stream"     : name,
-                "id"         : id,
-                "version"    : version,
-                "key_order"   : key_order,
-                "format_str"  : format_str,
-                "definition" : definition,
-                "versions"   : []
+                "stream": name,
+                "id": id,
+                "version": version,
+                "key_order": key_order,
+                "format_str": format_str,
+                "definition": definition,
+                "versions": []
             }
 
         self.known_stream_versions = known_stream_versions
@@ -150,7 +178,6 @@ class MySQLDestination(Destination):
         cursor.close()
 
     def create_new_stream_destination(self, stream_obj):
-        cursor = self.cnx.cursor()
         stream = stream_obj["stream"]
         version = stream_obj["version"]
 
@@ -163,8 +190,8 @@ class MySQLDestination(Destination):
             # if we are updating an existing stream, update the row
             query = "UPDATE origin_streams SET version={} WHERE name=\"{}\""
             query = query.format(version, stream)
-        cursor.execute(query)
-        #streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
+        cursor = self.cnx.execute(query)
+        # streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
         cursor.execute("SELECT id FROM origin_streams WHERE name=\"{}\" LIMIT 1".format(stream))
         stream_id = cursor.fetchone()[0]
         # overwrite streamID using the correct one
@@ -193,8 +220,8 @@ class MySQLDestination(Destination):
         # make the new data stream table based on the template provided
         query = (
             "CREATE TABLE IF NOT EXISTS `measurements_{}_{}` ("
-            #" `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
-            " `{}` {}," # timestamp field
+            # " `id` BIGINT NOT NULL AUTO_INCREMENT," # id field
+            " `{}` {},"  # timestamp field
         )
         try:
             ts_dtype = data_types[self.config.get("Server", "timestamp_type")]["mysql"]
@@ -206,7 +233,7 @@ class MySQLDestination(Destination):
             f0, f1 = fields[i]
             query += " `{}` {},".format(f0, f1)
         query += "PRIMARY KEY (`{}`))".format(TIMESTAMP)
-        #self.logger.debug(query)
+        # self.logger.debug(query)
         cursor.execute(query)
 
         # update pointer to the current version of the stream if it exists
@@ -238,15 +265,42 @@ class MySQLDestination(Destination):
         version = self.known_streams[stream]["version"]
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
-        #self.logger.debug(query)
-        #self.logger.debug(values)
-        cursor = self.cnx.cursor()
+        # self.logger.debug(query)
+        # self.logger.debug(values)
         try:
-            cursor.execute(query, values)
-        except IntegrityError:
+            cursor = self.cnx.execute(query, values)
+        except mysql.connector.IntegrityError:
             self.exception('Error writing data to mysql server.')
         self.cnx.commit()
         cursor.close()
+
+    def insert_measurements(self, stream, version, measurements, logger=None):
+        measurement_array = []
+        keys = measurements[0].keys()
+        keys.sort()
+        for m in measurements:
+            for k in keys:
+                # make big 1D list
+                measurement_array.append(m[k])
+
+        fmt = "(" + ','.join(keys) + ")"
+        value_placeholders = "(" + ','.join(["%s"]*len(keys)) + ")"
+        value_placeholders = ','.join([value_placeholders]*len(measurements))
+
+        query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
+        query = query.format(stream, version, ''.join(fmt), value_placeholders)
+        try:
+            cursor = self.cnx.execute(query, measurement_array)
+        except mysql.connector.Error as err:
+            msg = 'Error with mysql server. Error code: {}, msg: {}'.format(err.errno, err)
+            if logger is None:
+                self.logger.exception(msg)
+            else:
+                logger.exception(msg)
+            raise err
+        else:
+            self.cnx.commit()
+            cursor.close()
 
     # read stream data from storage between the timestamps given by time = [start,stop]
     def get_raw_stream_data(self, stream, start=None, stop=None, fields=[]):
@@ -275,9 +329,8 @@ class MySQLDestination(Destination):
             start,
             stop
         )
-        #print query % values
-        cursor = self.cnx.cursor()
-        cursor.execute(query % values)
+        # print query % values
+        cursor = self.cnx.execute(query % values)
 
         data = {}
 

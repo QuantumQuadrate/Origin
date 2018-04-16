@@ -20,30 +20,31 @@ If you just want to connect to an existing server see below.
 ### Dependencies
 The default data storage is h5py.
 
-* python 2.7
+* python 2.7 (dev)
 * [pyzmq](http://zeromq.org/bindings:python)
 * [numpy](http://www.numpy.org/)
 
 You then need one of these backends (or none if you are using the filesystem backend)
 * [h5py](http://docs.h5py.org/en/latest/build.html) (default)
-* [mysql.connector](http://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-1.2.3.zip)
+* [mysql.connector](http://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-2.1.7.zip)
 * [pymongo](https://api.mongodb.com/python/current/)
 
 
 ```bash
-pip install pyzmq numpy
+sudo apt-get install python python-dev python-pip
+sudo pip install -upgrade pip
+python setup.py install
 ```
-Then at least one of the following, I recommend h5py:
+If you want to use an hdf5 file or mongodb backend (MySQL is the default) run one of the following:
 ```bash
-pip install h5py
-pip install http://cdn.mysql.com/Downloads/Connector-Python/mysql-connector-python-1.2.3.zip
-pip install pymongo
+python setup.py install hdf5
+python setup.py install mongo
 ```
 
 For windows check the recommended installation stuff on the packages website (or use canopy or a package manager).
 The pip install for mysql.connector worked for me on windows, and is probably the easiest way to do it.
 
-If you want to use `mysql` or `mongodb` then you will need to uncomment the import line out in `lib/origin/server/__init__.py`:
+If you want to use `hdf5` or `mongodb` then you will need to uncomment the import line out in `lib/origin/server/__init__.py`:
 ```bash
 vim lib/origin/server/__init__.py
 ```
@@ -57,10 +58,10 @@ from origin_destination import destination
 
 
 # if you dont want to install these modules then just comment the ones you dont want to use
-from origin_hdf5_destination import hdf5_destination
-#from origin_mysql_destination import mysql_destination
+# from origin_hdf5_destination import hdf5_destination
+from origin_mysql_destination import mysql_destination
 from origin_filesystem_destination import filesystem_destination # this one should be fine since its standard libs
-#from origin_mongodb_destination import mongodb_destination
+# from origin_mongodb_destination import mongodb_destination
 ```
 
 ### OPTIONAL: Configure MySQL (only if you want to use it)

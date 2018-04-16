@@ -7,7 +7,10 @@ Destintations are databases, filesystems, file formats (HDF5, CSV), etc.
 
 import struct
 import numpy as np
-
+import multiprocessing
+import Queue
+import time
+import logging
 
 from origin.server import template_validation
 from origin.server import measurement_validation
@@ -49,6 +52,30 @@ from origin import data_types, current_time, TIMESTAMP, registration_validation
 ###############################################################################
 
 
+class QueuedObject(object):
+    """An generic object that can be passed between processes."""
+    def __init__(self, object_type, id):
+        self.type = object_type
+        self.id = id
+
+
+class QueuedMeasurement(QueuedObject):
+    """A data object that can be passed between processes."""
+    def __init__(self, stream, version, measurements, id):
+        super(QueuedMeasurement, self).__init__('data', id)
+        self.stream = stream
+        self.version = version
+        self.measurements = measurements
+
+
+class QueuedMessage(QueuedObject):
+    """A message object that can be passed between processes for signaling."""
+    def __init__(self, command, message=''):
+        super(QueuedMessage, self).__init__('msg', id)
+        self.command = command
+        self.message = message
+
+
 class Destination(object):
     """!@brief A class representing a data storage location, such as a database,
     filesystem, or file format.
@@ -64,7 +91,6 @@ class Destination(object):
         @param logger pass in a logger object
         @param config configuration object
         """
-
         self.logger = logger
         self.config = config
         self.known_streams = {}
@@ -72,6 +98,15 @@ class Destination(object):
 
         self.connect()
         self.read_stream_def_table()
+        if self.config.getboolean("Server", "batch_allowed"):
+            self.logger.info("Batched inserts are enabled.")
+            self.start_writer()
+            # Asynchronous insertion of batched measurement
+            self.inserter = self.queue_measurement
+        else:
+            self.logger.info("Batched inserts are disabled.")
+            # Synchronous insertion of a single measurement
+            self.inserter = self.insert_measurement
 
     def connect(self):
         """!@brief Prepare the backend.
@@ -131,9 +166,9 @@ class Destination(object):
             stream_obj = self.known_streams[stream]
         else:
             stream_obj = {
-                "stream"     : stream.strip(),
-                "id"         : stream_id,
-                "versions"   : []
+                "stream": stream.strip(),
+                "id": stream_id,
+                "versions": []
             }
 
         stream_obj["version"] = version
@@ -141,10 +176,10 @@ class Destination(object):
         stream_obj["format_str"] = format_str
         stream_obj["definition"] = definition
         stream_obj["versions"].append({
-            "version"    : version,
-            "key_order"  : key_order,
-            "format_str" : format_str,
-            "definition" : definition,
+            "version": version,
+            "key_order": key_order,
+            "format_str": format_str,
+            "definition": definition,
         })
 
         # update the stream inventory
@@ -237,14 +272,31 @@ class Destination(object):
         return (0, struct.pack("!II", stream_id, dest_version))
 
     def insert_measurement(self, stream, measurements):
-        """!@brief Save formated measurement to the destination.
+        """!@brief Synchronously insert data into destination.
 
         This method must be overwritten in the specific implementation.
 
         @param stream a string holding the stream name
-        @param measurements a dictionary containing the data
+        @param measurements a dictionary containing the row data
         """
         raise NotImplementedError
+
+    def insert_measurements(self, stream, version, measurements):
+        """!@brief Synchronously insert data into destination.
+
+        This method must be overwritten in the specific implementation.
+
+        @param stream a string holding the stream name
+        @param version the version number of the stream
+        @param measurements a list of dictionaries containing the row data
+        """
+        raise NotImplementedError
+
+    def queue_measurement(self, stream, measurement):
+        """!@brief Add a measurement dict to be inserted asynchronously."""
+        ver = self.known_streams[stream]["version"]
+        self.insert_queue.put(QueuedMeasurement(stream, ver, measurement, self.message_counter))
+        self.message_counter += 1
 
     def measurement(self, stream, measurements):
         """!@brief Perfom measurement validation, timestamp data if missing field,
@@ -273,7 +325,8 @@ class Destination(object):
         except KeyError:
             measurements[TIMESTAMP] = current_time(self.config)
 
-        self.insert_measurement(stream, measurements)
+        # pointer to either queue_measurement or insert_measurement, resolved in __init__
+        self.inserter(stream, measurements)
         result = 0
         result_text = ""
         return (result, result_text, measurements)
@@ -312,7 +365,7 @@ class Destination(object):
             result_text: message to return to client
             measurements: processed data, empty dict if error
         """
-       fmtstr =  self.known_streams[stream]["format_str"]
+        fmtstr = self.known_streams[stream]["format_str"]
         try:
             dtuple = struct.unpack_from(fmtstr, measurements)
         except:
@@ -474,3 +527,71 @@ class Destination(object):
             if sid > stream_id:
                 stream_id = sid
         return stream_id + 1
+
+    def start_writer(self):
+        """!@brief Initialize a queue object."""
+        self.logger.info("Starting destination worker...")
+        self.message_counter = 0
+        self.insert_queue = multiprocessing.Queue()
+        self.writer = multiprocessing.Process(target=self.write_worker, args=(self.insert_queue,))
+        self.writer.daemon = True
+        self.writer.start()
+        self.logger.info("Destination worker started")
+
+    def write_worker(self, queue):
+        stream_data = {}
+        logger = logging.getLogger('write_worker')
+        logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler('var/write_worker.log')
+        fh.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s = %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+        logger.info("Hello from the destination worker")
+        while True:
+            # sort new entries
+            data_cnt = 0
+            start = time.time()
+            while True:
+                try:
+                    d = queue.get(False)
+                except Queue.Empty:
+                    # logger.debug('Empty queue found')
+                    pass
+                else:
+                    logger.debug("new data found in queue: {}".format(d.measurements))
+                    if d.type == 'data':
+                        data_cnt += 1
+                        if d.stream not in stream_data:
+                            logger.debug('unrecognized stream: {}'.format(d.stream))
+                            stream_data[d.stream] = {}
+                        if d.version not in stream_data[d.stream]:
+                            logger.debug('unrecognized stream version: {}({})'.format(d.stream, d.version))
+                            stream_data[d.stream][d.version] = []
+                        stream_data[d.stream][d.version].append(d.measurements)
+                        logmsg = 'stream: {} data length: {}'
+                        logger.debug(logmsg.format(d.stream, len(stream_data[d.stream][d.version])))
+                        logger.debug('total data messages processed: {}'.format(data_cnt))
+                    elif d.type == 'msg':
+                        logmsg = 'Write worker recieved command in queue. cmd: {}, msg: {}'
+                        logger.info(logmsg.format(d.command, d.message))
+                # check timeout condition
+                if time.time() - start > 1:
+                    logger.debug('timeout condition met')
+                    break
+
+            if data_cnt:
+                logger.debug("I am about to try to insert {} rows".format(data_cnt))
+                # bulk inserts of sorted data
+                for s in stream_data:
+                    for v in stream_data[s]:
+                        if len(stream_data[s][v]) > 0:
+                            try:
+                                start = time.time()
+                                self.insert_measurements(s, v, stream_data[s][v], logger=logger)
+                                logmsg = 'Successfully inserted {} rows into stream: {}, elasped time: {} s'
+                                logger.info(logmsg.format(len(stream_data[s][v]), s, time.time()-start))
+                            except:
+                                logger.exception('Unhandled server error encounter in write_worker.')
+                                # TODO: save data in queue that errored to disk
+                            stream_data[s][v] = []
