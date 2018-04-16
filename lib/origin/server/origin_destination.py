@@ -542,7 +542,7 @@ class Destination(object):
         stream_data = {}
         logger = logging.getLogger('write_worker')
         logger.setLevel(logging.DEBUG)
-        fh = logging.FileHandler('var/write_worker.log')
+        fh = logging.FileHandler('{}/write_worker.log'.format(self.config.get('Server', 'var_path')))
         fh.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(name)s = %(levelname)s - %(message)s')
         fh.setFormatter(formatter)
