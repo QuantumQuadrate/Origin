@@ -35,13 +35,14 @@ config.read(configfile)
 
 # define a custom function to pass to the poller loop
 # MUST BE DEFINED BEFORE SUBSCRIBER INSTANTIATION
-def thermistor_print(stream_id, data, log):
+def thermistor_print(stream_id, data, log, foo=None):
     # convert temp from mC to C
     try:
         TempC = float(data['c0']) * 1.0E-3
         log.info("[{}]: {} C".format(stream_id, TempC))
     except KeyError:
         log.error('Problem accessing key `c0`. Are you subscribed to the right stream?')
+    log.info('testing foo kwarg, expecting "hi" recieved: "{}".'.format(foo))
 
 
 sub = Subscriber(config, logger)
@@ -59,7 +60,10 @@ if stream not in sub.known_streams:
 
 print("subscribing to stream: %s" % (stream,))
 sub.subscribe(stream)
-sub.subscribe(stream, callback=thermistor_print)
+# can use arbitrary callback
+# if you need to use the same base callback for multiple streams pass in specific
+# parameters through kwargs
+sub.subscribe(stream, callback=thermistor_print, foo='hi')
 
 try:
     while True:

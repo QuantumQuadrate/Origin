@@ -43,11 +43,13 @@ def poller_loop(sub_addr, queue, log):
                 stream_filter = cmd['stream_filter']
                 log.info(msg.format(stream_filter))
                 # add the callback to the list of things to do for the stream
-                if stream_filter in subscriptions:
-                    subscriptions[stream_filter].append(cmd['callback'])
-                else:
-                    subscriptions[stream_filter] = [cmd['callback']]
+                if stream_filter not in subscriptions:
+                    subscriptions[stream_filter] = []
                     sub_sock.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
+                subscriptions[stream_filter].append({
+                    'callback': cmd['callback'],
+                    'kwargs': cmd['kwargs']
+                })
 
                 log.info("subscriptions: {}".format(subscriptions))
 
@@ -75,7 +77,7 @@ def poller_loop(sub_addr, queue, log):
             try:
                 log.info("new data")
                 for cb in subscriptions[streamID]:
-                    cb(streamID, json.loads(content), log)
+                    cb['callback'](streamID, json.loads(content), log, **cb['kwargs'])
             except KeyError:
                 msg = "An unrecognized streamID `{}` was encountered"
                 log.error(msg.format(streamID))
@@ -122,7 +124,7 @@ class Subscriber(reciever.Reciever):
         super(Subscriber, self).close()
         self.queue.put({'action': 'SHUTDOWN'})
 
-    def subscribe(self, stream, callback=None):
+    def subscribe(self, stream, callback=None, **kwargs):
         """!@brief Subscribe to a data stream and assign a callback
 
         You can subscribe to multiple data streams simultaneously using the
@@ -157,7 +159,8 @@ class Subscriber(reciever.Reciever):
         cmd = {
             'action': 'SUBSCRIBE',
             'stream_filter': stream_filter,
-            'callback': callback
+            'callback': callback,
+            'kwargs': kwargs
         }
         self.log.info('sending cmd to process: {}'.format(cmd))
         self.queue.put(cmd)
