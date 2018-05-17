@@ -48,10 +48,11 @@ def poller_loop(sub_addr, queue, log):
                     sub_sock.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
                 subscriptions[stream_filter].append({
                     'callback': cmd['callback'],
-                    'kwargs': cmd['kwargs']
+                    'kwargs': cmd['kwargs'],
+                    'state': {}
                 })
 
-                log.info("subscriptions: {}".format(subscriptions))
+                log.info("subscriptions: {}".format(subscriptions[stream_filter][-1]))
 
             if (cmd['action'] == 'UNSUBSCRIBE' or
                     cmd['action'] == 'REMOVE_ALL_CBS'):
@@ -75,9 +76,12 @@ def poller_loop(sub_addr, queue, log):
         try:
             [streamID, content] = sub_sock.recv_multipart()
             try:
-                log.info("new data")
+                log.debug("new data")
                 for cb in subscriptions[streamID]:
-                    cb['callback'](streamID, json.loads(content), log, **cb['kwargs'])
+                    cb['state'] = cb['callback'](
+                        streamID, json.loads(content),
+                        cb['state'], log, **cb['kwargs']
+                    )
             except KeyError:
                 msg = "An unrecognized streamID `{}` was encountered"
                 log.error(msg.format(streamID))
