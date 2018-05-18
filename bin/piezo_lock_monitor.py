@@ -146,7 +146,7 @@ if __name__ == "__main__":
     # parameters through kwargs
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
-    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv',adrs='zwang833@wisc.edu')
+    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv')
 
     try:
         while True:
