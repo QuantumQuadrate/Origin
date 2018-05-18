@@ -19,7 +19,7 @@ def send_messages(ch,status,adrs):
     status is string value unlocked/relocked/out of range"""
     return requests.post(
         "https://api.mailgun.net/v3/sandbox614407adee87476b873974bc39be24f9.mailgun.org/messages",
-        auth=("api", "key-1ecf921dc7a279fb94acc63130f0775d"),
+        auth=("api", "API_Key"),
         data={
             "from": "Excited User <mailgun@sandbox614407adee87476b873974bc39be24f9.mailgun.org>",
             "to": [adrs],
