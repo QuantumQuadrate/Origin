@@ -35,7 +35,7 @@ config.read(configfile)
 
 # define a custom function to pass to the poller loop
 # MUST BE DEFINED BEFORE SUBSCRIBER INSTANTIATION
-def thermistor_print(stream_id, data, log, foo=None):
+def thermistor_print(stream_id, data, state, log, foo=None):
     # convert temp from mC to C
     try:
         TempC = float(data['c0']) * 1.0E-3
@@ -43,6 +43,7 @@ def thermistor_print(stream_id, data, log, foo=None):
     except KeyError:
         log.error('Problem accessing key `c0`. Are you subscribed to the right stream?')
     log.info('testing foo kwarg, expecting "hi" recieved: "{}".'.format(foo))
+    return state
 
 
 sub = Subscriber(config, logger)
