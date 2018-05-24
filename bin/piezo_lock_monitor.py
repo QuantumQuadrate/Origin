@@ -8,6 +8,8 @@ import logging
 import time
 import numpy as np
 import requests
+from flask import Flask
+from flask import render_template
 from origin.client.origin_subscriber import Subscriber
 
 
@@ -19,7 +21,7 @@ def send_messages(ch,status,adrs):
     status is string value unlocked/relocked/out of range"""
     return requests.post(
         "https://api.mailgun.net/v3/sandbox614407adee87476b873974bc39be24f9.mailgun.org/messages",
-        auth=("api", "API_Key"),
+        auth=("api", "key-1ecf921dc7a279fb94acc63130f0775d"),
         data={
             "from": "Excited User <mailgun@sandbox614407adee87476b873974bc39be24f9.mailgun.org>",
             "to": [adrs],
@@ -94,63 +96,75 @@ def piezo_monitor(stream_id, data, state, log, buflen=100, trigstd=3, init=30, c
 
     return state
 
+#webpage
+app = Flask(__name__)
 
-if __name__ == "__main__":
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+@app.route('/monitor')
+def home():
+    return render_template('index.html')
 
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+@app.route('/monitor/reset')
+def reset(action=None):
+    return render_template('channel.html', action='reset')
 
-    fLog = logging.FileHandler("f.log")
-    fLog.setLevel(logging.DEBUG)
-    fLog.setFormatter(formatter)
-    logger.addHandler(fLog)
+@app.route('/monitor/reset/<ch>')
+def reset_ch(ch):
+    print 'Resetting channel...{}'.format(ch)
+    sub.reset(stream, ch)
+    return "Done!"
 
-    # first find ourself
-    fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
-    fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
-    fullCfgPath = os.path.join(fullBasePath, "config")
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == 'test':
-            configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
-        else:
-            configfile = os.path.join(fullCfgPath, sys.argv[1])
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+fLog = logging.FileHandler("f.log")
+fLog.setLevel(logging.DEBUG)
+fLog.setFormatter(formatter)
+logger.addHandler(fLog)
+
+# first find ourself
+fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullCfgPath = os.path.join(fullBasePath, "config")
+
+if len(sys.argv) > 1:
+    if sys.argv[1] == 'test':
+        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
     else:
-        configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+        configfile = os.path.join(fullCfgPath, sys.argv[1])
+else:
+    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
 
-    config = ConfigParser.ConfigParser()
-    config.read(configfile)
+config = ConfigParser.ConfigParser()
+config.read(configfile)
 
-    sub = Subscriber(config, logger)
+sub = Subscriber(config, logger)
 
-    logger.info("streams")
-    print('')
-    pprint.pprint(sub.known_streams.keys())
+logger.info("streams")
+print('')
+pprint.pprint(sub.known_streams.keys())
 
-    stream = 'FNODE_ADCS'
+stream = 'FNODE_ADCS'
 
-    if stream not in sub.known_streams:
-        print("stream not recognized")
-        sub.close()
-        sys.exit(1)
+if stream not in sub.known_streams:
+    print("stream not recognized")
+    sub.close()
+    sys.exit(1)
 
-    print("subscribing to stream: %s" % (stream,))
-    # sub.subscribe(stream)
-    # can use arbitrary callback
-    # if you need to use the same base callback for multiple streams pass in specific
-    # parameters through kwargs
-    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
-    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
-    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv',adrs='zwang833@wisc.edu')
+print("subscribing to stream: %s" % (stream,))
+# sub.subscribe(stream)
+# can use arbitrary callback
+# if you need to use the same base callback for multiple streams pass in specific
+# parameters through kwargs
+sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
+sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
+sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv')
 
-    try:
-        while True:
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        sub.close()
-        logger.info('closing')
+app.run()
+sub.close()
+logger.info('closing')

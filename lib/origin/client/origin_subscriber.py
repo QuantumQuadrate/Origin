@@ -65,6 +65,16 @@ def poller_loop(sub_addr, queue, log):
                 log.info(msg.format(cmd['stream_filter']))
                 del subscriptions[cmd['stream_filter']]
 
+            if cmd['action'] == 'RESET':
+                msg = 'Resetting channel'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    #cb is a dict with all the info of each channel subscribed
+                    #stream_filter is a list of all the cb dict.
+                    if cb['kwargs']['ch'] == cmd['channel']:
+                        cb['state']={}
+                log.info('Done resetting')
+
         except multiprocessing.queues.Empty:
             pass
         except IOError:
@@ -126,7 +136,7 @@ class Subscriber(reciever.Reciever):
 
     def close(self):
         super(Subscriber, self).close()
-        self.queue.put({'action': 'SHUTDOWN'})
+        self.send_command({'action': 'SHUTDOWN'})
 
     def subscribe(self, stream, callback=None, **kwargs):
         """!@brief Subscribe to a data stream and assign a callback
@@ -167,7 +177,7 @@ class Subscriber(reciever.Reciever):
             'kwargs': kwargs
         }
         self.log.info('sending cmd to process: {}'.format(cmd))
-        self.queue.put(cmd)
+        self.send_command(cmd)
 
     def get_stream_filter(self, stream):
         """!@brief Make the appropriate stream filter to subscribe to a stream
@@ -192,7 +202,7 @@ class Subscriber(reciever.Reciever):
         @param stream A string holding the stream name
         """
         stream_filter = self.get_stream_filter(stream)
-        self.queue.put({
+        self.send_command({
             'action': 'REMOVE_ALL_CBS',
             'stream_filter': stream_filter
         })
@@ -206,7 +216,20 @@ class Subscriber(reciever.Reciever):
         @param stream A string holding the stream name
         """
         stream_filter = self.get_stream_filter(stream)
-        self.queue.put({
+        self.send_command({
             'action': 'UNSUBSCRIBE',
             'stream_filter': stream_filter
         })
+
+    def reset(self, stream, ch=None):
+        stream_filter = self.get_stream_filter(stream)
+
+        self.send_command({
+            'action': 'RESET',
+            'stream_filter': stream_filter,
+            'channel': ch
+        })
+
+
+    def send_command(self, cmd):
+        self.queue.put(cmd)
