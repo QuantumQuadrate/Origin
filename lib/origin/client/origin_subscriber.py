@@ -11,6 +11,7 @@ import origin_reciever as reciever
 
 import multiprocessing
 
+import requests
 
 def sub_print(stream_id, data, log):
     """!@brief Default stream data callback.  Prints data.
@@ -26,15 +27,24 @@ def poller_loop(sub_addr, queue, log):
     # a hash table (dict) of callbacks to perform when a message is recieved
     # the hash is the data stream filter, the value is a list of callbacks
     subscriptions = {}
+    #a dict shows which channel is subscribed and unsubscribed:
+    sub_list = {}
+    #subscription is a dict
     context = zmq.Context()
     sub_sock = context.socket(zmq.SUB)
     # listen for one second, before doing housekeeping
     sub_sock.setsockopt(zmq.RCVTIMEO, 1000)
     sub_sock.connect(sub_addr)
+            # cmd = {
+            #     'action': 'SUBSCRIBE',
+            #     'stream_filter': stream_filter,
+            #     'callback': callback,
+            #     'kwargs': kwargs,
+            # }
     while True:
         try:
+            #get command from command queue
             cmd = queue.get_nowait()
-            log.info(cmd)
             if cmd['action'] == 'SHUTDOWN':
                 break
 
@@ -42,17 +52,42 @@ def poller_loop(sub_addr, queue, log):
                 msg = 'Subscribing with stream filter: [{}]'
                 stream_filter = cmd['stream_filter']
                 log.info(msg.format(stream_filter))
+
+                # add subscribed channel info to dict
+                #sub_list = {1:{kwargs},2:{kwargs}}
+                sub_list[cmd['id']] = cmd['kwargs']
+                log.info(sub_list)
+                sub_list_json = json.dumps(sub_list)
+                requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
+
                 # add the callback to the list of things to do for the stream
                 if stream_filter not in subscriptions:
                     subscriptions[stream_filter] = []
+                    #stream_filter is assigned as a key with an empty list
                     sub_sock.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
                 subscriptions[stream_filter].append({
                     'callback': cmd['callback'],
                     'kwargs': cmd['kwargs'],
-                    'state': {}
+                    'state': {},
+                    'id': cmd['id']
                 })
 
-                log.info("subscriptions: {}".format(subscriptions[stream_filter][-1]))
+                log.info("subscriptions: {}".format(subscriptions[stream_filter]))
+
+            if cmd['action'] == 'UPDATE_KW':
+                msg = 'Updating channel'
+                log.info(msg.format(cmd['stream_filter']))
+                sub_sock.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
+                for cb in subscriptions[stream_filter]:
+                    if cb['id'] == cmd['id']:
+                        cb['kwargs'] = cmd['kwargs']
+
+                sub_list[cmd['id']] = cmd['kwargs']
+                sub_list_json = json.dumps(sub_list)
+                requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
+                log.info('Keywords updated')
+                log.info("subscriptions: {}".format(subscriptions[stream_filter]))
+
 
             if (cmd['action'] == 'UNSUBSCRIBE' or
                     cmd['action'] == 'REMOVE_ALL_CBS'):
@@ -71,9 +106,10 @@ def poller_loop(sub_addr, queue, log):
                 for cb in subscriptions[stream_filter]:
                     #cb is a dict with all the info of each channel subscribed
                     #stream_filter is a list of all the cb dict.
-                    if cb['kwargs']['ch'] == cmd['channel']:
+                    if cb['id'] == cmd['id']:
                         cb['state']={}
                 log.info('Done resetting')
+                log.info("subscriptions: {}".format(subscriptions[stream_filter]))
 
         except multiprocessing.queues.Empty:
             pass
@@ -128,11 +164,16 @@ class Subscriber(reciever.Reciever):
         self.queue = multiprocessing.Queue()
         # start process
         sub_addr = "tcp://{}:{}".format(self.ip, self.sub_port)
+        #setup a process as obj.loop for poller-loop
         self.loop = multiprocessing.Process(
             target=loop,
             args=(sub_addr, self.queue, logger)
         )
+        #start loop process every time subscriber class is called
         self.loop.start()
+        self.id_list=[]
+        self.last_index=0
+        self.id=self.get_id()
 
     def close(self):
         super(Subscriber, self).close()
@@ -158,6 +199,7 @@ class Subscriber(reciever.Reciever):
         """
         try:
             stream_filter = self.get_stream_filter(stream)
+            self.id = self.get_id()
         except KeyError:
             msg = "No stream matching string: `{}` found."
             self.log.error(msg.format(stream))
@@ -170,11 +212,13 @@ class Subscriber(reciever.Reciever):
             callback = sub_print
 
         # send subscription info to the poller loop
+            #kwargs is a dict including all the keyword parameters needed
         cmd = {
             'action': 'SUBSCRIBE',
             'stream_filter': stream_filter,
             'callback': callback,
-            'kwargs': kwargs
+            'kwargs': kwargs,
+            'id' : self.id
         }
         self.log.info('sending cmd to process: {}'.format(cmd))
         self.send_command(cmd)
@@ -204,7 +248,7 @@ class Subscriber(reciever.Reciever):
         stream_filter = self.get_stream_filter(stream)
         self.send_command({
             'action': 'REMOVE_ALL_CBS',
-            'stream_filter': stream_filter
+            'stream_filter': stream_filter,
         })
 
     def unsubscribe(self, stream):
@@ -218,18 +262,34 @@ class Subscriber(reciever.Reciever):
         stream_filter = self.get_stream_filter(stream)
         self.send_command({
             'action': 'UNSUBSCRIBE',
-            'stream_filter': stream_filter
+            'stream_filter': stream_filter,
         })
 
-    def reset(self, stream, ch=None):
+    def reset(self, stream, id):
         stream_filter = self.get_stream_filter(stream)
-
         self.send_command({
             'action': 'RESET',
             'stream_filter': stream_filter,
-            'channel': ch
+            'id': id
+        })
+
+    def update(self, stream, id, **kwargs):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'UPDATE_KW',
+            'stream_filter': stream_filter,
+            'kwargs': kwargs,
+            'id': id
         })
 
 
     def send_command(self, cmd):
+        #function/method to put command into a queue
         self.queue.put(cmd)
+
+    def get_id(self):
+        #function to assign unique id index to each subscribed channel
+        while self.last_index in self.id_list:
+            self.last_index+=1
+        self.id_list.append(self.last_index)
+        return self.id_list[-1]

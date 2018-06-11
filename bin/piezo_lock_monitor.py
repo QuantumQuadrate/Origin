@@ -8,10 +8,12 @@ import logging
 import time
 import numpy as np
 import requests
+import json
+import ast
 from flask import Flask
 from flask import render_template
+from flask import request
 from origin.client.origin_subscriber import Subscriber
-
 
 # define a custom function to pass to the poller loop
 #send email messages function
@@ -21,7 +23,7 @@ def send_messages(ch,status,adrs):
     status is string value unlocked/relocked/out of range"""
     return requests.post(
         "https://api.mailgun.net/v3/sandbox614407adee87476b873974bc39be24f9.mailgun.org/messages",
-        auth=("api", "key-1ecf921dc7a279fb94acc63130f0775d"),
+        auth=("api", "API_Key"),
         data={
             "from": "Excited User <mailgun@sandbox614407adee87476b873974bc39be24f9.mailgun.org>",
             "to": [adrs],
@@ -46,11 +48,14 @@ def piezo_monitor(stream_id, data, state, log, buflen=100, trigstd=3, init=30, c
         state['index'] = 0
         state['time'] = [] # a list of time points where unlock occurs
         state['error'] = False
+        state['channel'] = ch
+        state['init'] = init
         skip = True
     try:
         if not skip: #exclude initialization index
             if state['error'] == False: #no error occured in last data
                 #warning if data is detected to be out of range,skip alarm and dont put in data untill it's in range
+                log.info(state)
                 if data[ch] in [0,4095]:
                     log.warning(ch+' Out of range')
                     state['error'] = True
@@ -66,7 +71,6 @@ def piezo_monitor(stream_id, data, state, log, buflen=100, trigstd=3, init=30, c
                     #alarm condition: compare new data to previous mean and std values
                     if not np.isnan(state['prev_data'][init-1]): #if first init data is filled in
                         if abs(data[ch] - mean) > std*trigstd:
-                            state['error'] = True
                             log.info(ch+' unlock!?')
                             #the time of unlock alarm
                             t = time.time()
@@ -92,79 +96,115 @@ def piezo_monitor(stream_id, data, state, log, buflen=100, trigstd=3, init=30, c
                         log.warning('Input adress as a string')
 
     except KeyError:
-        log.error('Problem accessing key `c3`. Are you subscribed to the right stream?')
+        log.error('Problem accessing key. Are you subscribed to the right stream?')
 
     return state
 
-#webpage
-app = Flask(__name__)
+if __name__ == '__main__':
+#web server
+    app = Flask(__name__)
+    sub_file = 'subscriptions.json'
+    with open(sub_file, 'w') as f:
+        f.write('{}')
 
-@app.route('/monitor')
-def home():
-    return render_template('index.html')
+    #commands & webpage
+    #home page "monitor"
+    @app.route('/monitor', methods=['GET','PUT'])
+    def monitor():
+        #GET request string(json) needs to be save as file, to be read by flask template
+        try:
+            if request.method == "PUT":
+                sub_list_json = request.get_json()
+                with open(sub_file, 'w') as f:
+                    f.write(sub_list_json)
+            with open(sub_file, 'r') as f:
+                sub_list = json.load(f)
+            #sub_list = {1:{kwargs},2:{kwargs}}
+            return render_template('index.html', sub_list=sub_list)
+        except Exception:
+            return 'Unable to load page'
 
-@app.route('/monitor/reset')
-def reset(action=None):
-    return render_template('channel.html', action='reset')
+    #subscribe
+    @app.route('/update/<id>', methods=['GET', 'POST'])
+    def update(id):
+        id=id.encode('ascii','ignore')
+        with open(sub_file, 'r') as f:
+            sub_list = json.load(f)
 
-@app.route('/monitor/reset/<ch>')
-def reset_ch(ch):
-    print 'Resetting channel...{}'.format(ch)
-    sub.reset(stream, ch)
-    return "Done!"
+        if request.method == 'POST':
+            sub_list[id] = request.form.to_dict()
+            sub.update(stream, int(id), **sub_list[id])
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+        return render_template('keywords.html', id=id, kw_dict=sub_list[id])
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+    # @app.route('/monitor/subscribe/<ch>')
+    # def sub_ch(ch):
+    #     sub.subscribe(stream, )
 
-fLog = logging.FileHandler("f.log")
-fLog.setLevel(logging.DEBUG)
-fLog.setFormatter(formatter)
-logger.addHandler(fLog)
+    #unsubscribe
+    #pause
+    #restart
 
-# first find ourself
-fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
-fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
-fullCfgPath = os.path.join(fullBasePath, "config")
+    #reset
+    @app.route('/update/<id>/reset')
+    def reset(id):
+        sub.reset(stream, int(id))
+        return render_template('commands.html', id=id, action='reset')
 
-if len(sys.argv) > 1:
-    if sys.argv[1] == 'test':
-        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    fLog = logging.FileHandler("f.log")
+    fLog.setLevel(logging.DEBUG)
+    fLog.setFormatter(formatter)
+    logger.addHandler(fLog)
+
+    # first find ourself
+    fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+    fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+    fullCfgPath = os.path.join(fullBasePath, "config")
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'test':
+            configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+        else:
+            configfile = os.path.join(fullCfgPath, sys.argv[1])
     else:
-        configfile = os.path.join(fullCfgPath, sys.argv[1])
-else:
-    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+        configfile = os.path.join(fullCfgPath, "origin-server.cfg")
 
-config = ConfigParser.ConfigParser()
-config.read(configfile)
+    config = ConfigParser.ConfigParser()
+    config.read(configfile)
 
-sub = Subscriber(config, logger)
+    sub = Subscriber(config, logger)
 
-logger.info("streams")
-print('')
-pprint.pprint(sub.known_streams.keys())
+    logger.info("streams")
+    print('')
+    pprint.pprint(sub.known_streams.keys())
 
-stream = 'FNODE_ADCS'
+    stream = 'FNODE_ADCS'
 
-if stream not in sub.known_streams:
-    print("stream not recognized")
+    if stream not in sub.known_streams:
+        print("stream not recognized")
+        sub.close()
+        sys.exit(1)
+
+    print("subscribing to stream: %s" % (stream,))
+    # sub.subscribe(stream)
+    # can use arbitrary callback
+    # if you need to use the same base callback for multiple streams pass in specific
+    # parameters through kwargs
+    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
+    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
+    sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv')
+
+
+
+    app.run()
     sub.close()
-    sys.exit(1)
-
-print("subscribing to stream: %s" % (stream,))
-# sub.subscribe(stream)
-# can use arbitrary callback
-# if you need to use the same base callback for multiple streams pass in specific
-# parameters through kwargs
-sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
-sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
-sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv')
-
-app.run()
-sub.close()
-logger.info('closing')
+    logger.info('closing')
