@@ -8,3 +8,7 @@ Origin.egg-info/*
 build/*
 dist/*
 *.bak
+*.csv
+*.tsv
+*.log
+*.json

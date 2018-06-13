@@ -1,0 +1,28 @@
+<h1>Keywords Setting<h1>
+<form action="{{ url_for('update',id=id) }}" method=post>
+  <dl>
+  <dt><p>Input Keywords for {{kw_dict['ch']}}:<p>
+    <ul>
+      {% for kw in kw_dict %}
+      <li>{{kw}}: <input type=text name={{kw}} value={{kw_dict[kw]}}>
+      {% endfor %}
+    </ul>
+  <dd><input type=submit value=Update >
+  <dd><input type=button value=Reset onclick="window.location.href='/update/{{id}}/reset'">
+  <dd><input type=button value='Reset All Channels' onclick="window.location.href='/update/{{id}}/resetall'">
+  <dd>Alert: {{alert}}
+  <dd>Channel: {{pause}}
+  <dd><input type=button value='Mute Channel Alert' onclick="window.location.href='/update/{{id}}/mute'">
+    <input type=button value='Unmute Channel Alert' onclick="window.location.href='/update/{{id}}/unmute'">
+  <dd><input type=button value='Mute All Alert' onclick="window.location.href='/update/{{id}}/muteall'">
+    <input type=button value='Unmute All Alert' onclick="window.location.href='/update/{{id}}/unmuteall'">
+  <dd><input type=button value=Pause onclick="window.location.href='/update/{{id}}/pause'">
+    <input type=button value='Pause All Channels' onclick="window.location.href='/update/{{id}}/pauseall'">
+  <dd><input type=button value=Restart onclick="window.location.href='/update/{{id}}/restart'">
+    <input type=button value='Restart All Channels' onclick="window.location.href='/update/{{id}}/restartall'">
+  <dd><input type=button value=Unsubscribe onclick="window.location.href='/update/{{id}}/unsubscribe'">
+  <dd><input type=button value=Back onclick="window.location.href='/monitor'">
+        </label>
+    </div>
+  <dl>
+</form>

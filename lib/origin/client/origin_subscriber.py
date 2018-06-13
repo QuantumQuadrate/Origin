@@ -53,13 +53,6 @@ def poller_loop(sub_addr, queue, log):
                 stream_filter = cmd['stream_filter']
                 log.info(msg.format(stream_filter))
 
-                # add subscribed channel info to dict
-                #sub_list = {1:{kwargs},2:{kwargs}}
-                sub_list[cmd['id']] = cmd['kwargs']
-                log.info(sub_list)
-                sub_list_json = json.dumps(sub_list)
-                requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
-
                 # add the callback to the list of things to do for the stream
                 if stream_filter not in subscriptions:
                     subscriptions[stream_filter] = []
@@ -69,23 +62,29 @@ def poller_loop(sub_addr, queue, log):
                     'callback': cmd['callback'],
                     'kwargs': cmd['kwargs'],
                     'state': {},
+                    'control': {'alert': True, 'pause': False},
                     'id': cmd['id']
                 })
 
+                # add subscribed channel info to dict
+                #sub_list = {1:{'kwargs':{kwargs}, 'control':{control}}
+                sub_list[cmd['id']] = {
+                    'kwargs': cmd['kwargs'],
+                    'control': {'alert': True, 'pause': False}
+                }
                 log.info("subscriptions: {}".format(subscriptions[stream_filter]))
 
             if cmd['action'] == 'UPDATE_KW':
-                msg = 'Updating channel'
+                msg = 'Updating channel...'
                 log.info(msg.format(cmd['stream_filter']))
-                sub_sock.setsockopt_string(zmq.SUBSCRIBE, stream_filter)
                 for cb in subscriptions[stream_filter]:
                     if cb['id'] == cmd['id']:
                         cb['kwargs'] = cmd['kwargs']
-
-                sub_list[cmd['id']] = cmd['kwargs']
-                sub_list_json = json.dumps(sub_list)
-                requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
-                log.info('Keywords updated')
+                        #sub_list = {1:{'kwargs':{kwargs}, 'control':{control}}
+                        sub_list[cmd['id']]={
+                            'control': cb['control'],
+                            'kwargs': cmd['kwargs']
+                        }
                 log.info("subscriptions: {}".format(subscriptions[stream_filter]))
 
 
@@ -108,8 +107,65 @@ def poller_loop(sub_addr, queue, log):
                     #stream_filter is a list of all the cb dict.
                     if cb['id'] == cmd['id']:
                         cb['state']={}
-                log.info('Done resetting')
                 log.info("subscriptions: {}".format(subscriptions[stream_filter]))
+
+            if cmd['action'] == 'RESET_ALL':
+                msg = 'Resetting all channels'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    #cb is a dict with all the info of each channel subscribed
+                    #stream_filter is a list of all the cb dict.
+                    cb['state']={}
+                log.info("subscriptions: {}".format(subscriptions[stream_filter]))
+
+            if (cmd['action'] == 'MUTE' or
+                    cmd['action'] == 'UNMUTE'):
+                msg = 'Muted channel alert'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    if cb['id'] == cmd['id']:
+                        cb['control']['alert'] = (cmd['action'] == 'UNMUTE')
+                        sub_list[cmd['id']]={
+                            'control': cb['control'],
+                            'kwargs': cb['kwargs']
+                        }
+
+            if (cmd['action'] == 'MUTE_ALL' or
+                    cmd['action'] == 'UNMUTE_ALL'):
+                msg = 'Muted/Unmuted all channel alert'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    cb['control']['alert'] = (cmd['action'] == 'UNMUTE_ALL')
+                    sub_list[cb['id']]={
+                        'control': cb['control'],
+                        'kwargs': cb['kwargs']
+                    }
+
+            if (cmd['action'] == 'PAUSE_ALL' or
+                    cmd['action'] == 'RESTART_ALL'):
+                msg = 'Paused/ Restarted all channels'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    cb['control']['pause'] = (cmd['action'] == 'PAUSE_ALL')
+                    sub_list[cb['id']]={
+                        'control': cb['control'],
+                        'kwargs': cb['kwargs']
+                    }
+
+            if (cmd['action'] == 'PAUSE' or
+                    cmd['action'] == 'RESTART'):
+                msg = 'Paused/Restarted this channel'
+                log.info(msg.format(cmd['stream_filter']))
+                for cb in subscriptions[stream_filter]:
+                    if cb['id'] == cmd['id']:
+                        cb['control']['pause'] = (cmd['action'] == 'PAUSE')
+                        sub_list[cmd['id']]={
+                            'control': cb['control'],
+                            'kwargs': cb['kwargs']
+                        }
+
+            sub_list_json = json.dumps(sub_list)
+            requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
 
         except multiprocessing.queues.Empty:
             pass
@@ -124,10 +180,14 @@ def poller_loop(sub_addr, queue, log):
             try:
                 log.debug("new data")
                 for cb in subscriptions[streamID]:
-                    cb['state'] = cb['callback'](
-                        streamID, json.loads(content),
-                        cb['state'], log, **cb['kwargs']
-                    )
+                    if cb['control']['pause'] == False:
+                        cb['state'] = cb['callback'](
+                            streamID, json.loads(content),
+                            cb['state'], log, cb['control'], **cb['kwargs']
+                        )
+                    else:
+                        pass
+
             except KeyError:
                 msg = "An unrecognized streamID `{}` was encountered"
                 log.error(msg.format(streamID))
@@ -173,7 +233,6 @@ class Subscriber(reciever.Reciever):
         self.loop.start()
         self.id_list=[]
         self.last_index=0
-        self.id=self.get_id()
 
     def close(self):
         super(Subscriber, self).close()
@@ -218,7 +277,7 @@ class Subscriber(reciever.Reciever):
             'stream_filter': stream_filter,
             'callback': callback,
             'kwargs': kwargs,
-            'id' : self.id
+            'id' : self.get_id(),
         }
         self.log.info('sending cmd to process: {}'.format(cmd))
         self.send_command(cmd)
@@ -273,6 +332,13 @@ class Subscriber(reciever.Reciever):
             'id': id
         })
 
+    def reset_all(self, stream):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'RESET_ALL',
+            'stream_filter': stream_filter,
+        })
+
     def update(self, stream, id, **kwargs):
         stream_filter = self.get_stream_filter(stream)
         self.send_command({
@@ -282,6 +348,65 @@ class Subscriber(reciever.Reciever):
             'id': id
         })
 
+    def mute(self, stream, id):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'MUTE',
+            'stream_filter': stream_filter,
+            'id': id
+        })
+
+    def unmute(self, stream, id):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'UNMUTE',
+            'stream_filter': stream_filter,
+            'id': id,
+        })
+
+    def mute_all(self, stream):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'MUTE_ALL',
+            'stream_filter': stream_filter,
+        })
+
+    def unmute_all(self, stream):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'UNMUTE_ALL',
+            'stream_filter': stream_filter,
+        })
+
+    def pause(self, stream, id):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'PAUSE',
+            'stream_filter': stream_filter,
+            'id': id,
+        })
+
+    def pause_all(self, stream):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'PAUSE_ALL',
+            'stream_filter': stream_filter,
+        })
+
+    def restart(self, stream, id):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'RESTART',
+            'stream_filter': stream_filter,
+            'id': id,
+        })
+
+    def restart_all(self, stream):
+        stream_filter = self.get_stream_filter(stream)
+        self.send_command({
+            'action': 'RESTART_ALL',
+            'stream_filter': stream_filter,
+        })
 
     def send_command(self, cmd):
         #function/method to put command into a queue

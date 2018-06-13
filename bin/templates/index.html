@@ -1,0 +1,34 @@
+<h1>Monitor<h1>
+<form action="{{ url_for('monitor') }}" method=get>
+  <dl>
+  <dt><p>Subscribed Channels Settings:<p>
+    {% for id in id_list %}
+    <dd><input type='button' value='channel id: {{id}}' onclick="window.location.href='/update/{{id}}'"/>
+    {% endfor %}
+  <dl>
+<form>
+<!-- {% for act in ['pause','restart','reset','unsubscribe'] %}
+  <div>
+    <input type='button' value='{{act}}' onclick="window.location.href='/monitor/{{act}}'"/>
+  </div>
+{% endfor %}
+
+</body>
+</html> -->
+
+
+<!-- <body>
+  <p>Home page</p>
+    <div>
+      <input type='button' value='Pause' onclick="window.location.href='/monitor/pause'"/>
+      <input type='button' value='Restart' onclick="window.location.href='/monitor/restart'"/>
+    </div>
+    <div>
+      <input type='button' value='Reset' onclick="window.location.href='/monitor/reset'"/>
+    </div>
+    <div>
+      <input type='button' value='Unsubscribe' onclick="window.location.href='/monitor/unsubscribe'"/>
+    </div>
+  <a href='/reset'>reset</a>
+</body>
+</html> -->
