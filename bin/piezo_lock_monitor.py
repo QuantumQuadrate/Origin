@@ -44,7 +44,7 @@ def piezo_monitor(stream_id, data, state, log, control, buflen=100, trigstd=3, i
     adrs = str(adrs)
     #initialization:
     if 'prev_data' not in state:
-        empty = np.zeros(buflen)
+        empty = np.zeros(int(buflen))
         empty[:] = np.nan
         state['prev_data'] = empty #'prev_data' is an array with 10 data in memory
         state['index'] = 0
@@ -56,7 +56,7 @@ def piezo_monitor(stream_id, data, state, log, control, buflen=100, trigstd=3, i
         if not skip: #exclude initialization index
             if state['error'] == False: #no error occured in last data
                 #warning if data is detected to be out of range,skip alarm and dont put in data untill it's in range
-                log.info(state)
+                #log.info(state)
                 if data[ch] in [0,4095]:
                     log.warning(ch+' Out of range')
                     state['error'] = True
@@ -70,8 +70,8 @@ def piezo_monitor(stream_id, data, state, log, control, buflen=100, trigstd=3, i
                     std = np.nanstd(state['prev_data'])
                     state['prev_data'][state['index']] = data[ch]
                     #alarm condition: compare new data to previous mean and std values
-                    if not np.isnan(state['prev_data'][init-1]): #if first init data is filled in
-                        if abs(data[ch] - mean) > std*trigstd:
+                    if not np.isnan(state['prev_data'][int(init)-1]): #if first init data is filled in
+                        if abs(data[ch] - mean) > std*int(trigstd):
                             if control['alert'] == True:
                                 log.info(ch+' unlock!?')
                                 try:
@@ -86,7 +86,7 @@ def piezo_monitor(stream_id, data, state, log, control, buflen=100, trigstd=3, i
                     # putting new data into memory
                     state['index'] += 1
                     #cycle index if it gets to buffer length
-                    if state['index'] > (buflen-1):
+                    if state['index'] > (int(buflen)-1):
                         state['index'] = 0
             else: #state['error'] = True, error occured
                 if abs(data[ch]-2048)< 500:

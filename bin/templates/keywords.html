@@ -7,11 +7,11 @@
       <li>{{kw}}: <input type=text name={{kw}} value={{kw_dict[kw]}}>
       {% endfor %}
     </ul>
-  <dd><input type=submit value=Update >
+    <dd><input type=submit value=Update >
+    <dd>Alert: {{alert}}
+    <dd>Channel: {{pause}}
   <dd><input type=button value=Reset onclick="window.location.href='/update/{{id}}/reset'">
-  <dd><input type=button value='Reset All Channels' onclick="window.location.href='/update/{{id}}/resetall'">
-  <dd>Alert: {{alert}}
-  <dd>Channel: {{pause}}
+  <input type=button value='Reset All Channels' onclick="window.location.href='/update/{{id}}/resetall'">
   <dd><input type=button value='Mute Channel Alert' onclick="window.location.href='/update/{{id}}/mute'">
     <input type=button value='Unmute Channel Alert' onclick="window.location.href='/update/{{id}}/unmute'">
   <dd><input type=button value='Mute All Alert' onclick="window.location.href='/update/{{id}}/muteall'">

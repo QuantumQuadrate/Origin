@@ -310,7 +310,7 @@ class Subscriber(reciever.Reciever):
             'stream_filter': stream_filter,
         })
 
-    def unsubscribe(self, stream):
+    def unsubscribe(self, stream, i):
         """Unsubscribe from stream at the publisher.
 
         Calling this leaves the callbacks associated with the data stream.
