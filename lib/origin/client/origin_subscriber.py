@@ -13,7 +13,7 @@ import multiprocessing
 
 import requests
 
-def sub_print(stream_id, data, log):
+def sub_print(stream_id, data, state, log):
     """!@brief Default stream data callback.  Prints data.
 
     @param stream_id data stream id
@@ -21,6 +21,7 @@ def sub_print(stream_id, data, log):
     @param log logging object
     """
     log.info("[{}]: {}".format(stream_id, data))
+    return state
 
 
 def poller_loop(sub_addr, queue, log):
