@@ -3,6 +3,7 @@ This module extends the Destination class to work with a MySQL database.
 """
 
 import sys
+import logging
 
 from mysql.connector import connection, errorcode
 import mysql.connector
@@ -17,13 +18,21 @@ class MySQLConnWrapper(connection.MySQLConnection):
             cursor = self.cursor()
             cursor.execute(sql, values)
         except mysql.connector.OperationalError as err:
-            if err.errno == -1:
+            if err.errno == -1 or err.errno == 2055:
+                logger = logging.getLogger(__name__)
+                logger.error("MySQL disconnect event")
                 # mysql connection not available
                 self.connect()
                 cursor = self.cursor()
                 cursor.execute(sql, values)
             else:
                 raise err
+        except mysql.connector.Error as err:
+            logger = logging.getLogger(__name__)
+            logger.error(
+                'Unexpected mysql error encountered when trying to'
+                ' execute `{}` with values `{}`. errmsg: {}'.format(sql, values, err)
+            )
         return cursor
 
     def execute_list(self, sqls):
@@ -36,6 +45,12 @@ class MySQLConnWrapper(connection.MySQLConnection):
                 cursor = self.cursor()
             else:
                 raise err
+        except mysql.connector.Error as err:
+            logger = logging.getLogger(__name__)
+            logger.error(
+                'Unexpected mysql error encountered when trying to'
+                ' execute `{}` with values `{}`. errmsg: {}'.format(sql, values, err)
+            )
 
         for sql in sqls:
             cursor.execute(sql)
@@ -260,10 +275,10 @@ class MySQLDestination(Destination):
             fmt += [entry[0], ',']
             values.append(entry[1])
         fmt[-1] = ")"
-        value_placeholders = "(" + ','.join(["%s"]*len(measurement_array)) + ")"
+        value_placeholders = '(' + ','.join(["%s"]*len(measurement_array)) + ')'
 
         version = self.known_streams[stream]["version"]
-        query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
+        query = """INSERT INTO \"measurements_{}_{}\" {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
         # self.logger.debug(query)
         # self.logger.debug(values)
@@ -283,8 +298,8 @@ class MySQLDestination(Destination):
                 # make big 1D list
                 measurement_array.append(m[k])
 
-        fmt = "(" + ','.join(keys) + ")"
-        value_placeholders = "(" + ','.join(["%s"]*len(keys)) + ")"
+        fmt = '(`' + '`,`'.join(keys) + '`)'
+        value_placeholders = '(' + ','.join(["%s"]*len(keys)) + ')'
         value_placeholders = ','.join([value_placeholders]*len(measurements))
 
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
@@ -320,16 +335,17 @@ class MySQLDestination(Destination):
                     return (1, {}, msg)
 
         fields.append(TIMESTAMP)
-        query = "SELECT %s FROM measurements_%s_%d WHERE %s BETWEEN %d AND %d"
+        # TODO: use the built in method for putting strings together that escapes teh sql correctly
+        query = 'SELECT %s FROM measurements_%s_%d WHERE %s BETWEEN %d AND %d'
         values = (
-            ",".join(fields),
+            '`' + '`,`'.join(fields) + '`',  # escape possible keywords/reserved words
             stream,
             self.known_streams[stream]["version"],
             TIMESTAMP,
             start,
             stop
         )
-        # print query % values
+        # self.logger.warning(query % values)
         cursor = self.cnx.execute(query % values)
 
         data = {}
@@ -337,12 +353,17 @@ class MySQLDestination(Destination):
         for field in fields:
             data[field] = []
 
-        results = cursor.fetchall()
-
-        err = 0
-        if cursor.rowcount <= 0:
-            msg = "Stream declared, but no data saved."
+        try:
+	    results = cursor.fetchall()
+        except InterfaceError:
             err = 1
+            msg = "InterfaceError occurred"
+            results = []
+        else:
+            err = 0
+            if cursor.rowcount <= 0:
+                msg = "Stream declared, but no data in range."
+                err = 1
         cursor.close()
 
         for row in results:

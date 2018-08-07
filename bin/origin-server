@@ -33,6 +33,8 @@ mysql = False
 hdf5 = False
 mongo = False
 
+logging.basicConfig()
+
 try:
     from origin.server import MySQLDestination
     mysql = True
@@ -303,8 +305,11 @@ def read_worker(mon, addr, context, logger):
     read_socket.bind(addr)
 
     while True:
-        message = read_socket.recv()
-        read_socket.send_json(mon.processSingleReadMsg(message))
+        try:
+            message = read_socket.recv()
+            read_socket.send_json(mon.processSingleReadMsg(message))
+        except:
+            logger.exception('Unhandled exception in read_worker.')
 
 
 def main():

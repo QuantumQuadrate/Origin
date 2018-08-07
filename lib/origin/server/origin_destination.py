@@ -445,17 +445,22 @@ class Destination(object):
                 else:
                     # some stats need to be converted back to the native python
                     # type for JSON serialization
-                    dtype = data_types[self.known_stream_versions[stream][field]['type']]["type"]
-                    avg = np.nanmean(stream_data[field])
-                    std = np.nanstd(stream_data[field])
-                    max = dtype(np.nanmax(stream_data[field]))
-                    min = dtype(np.nanmin(stream_data[field]))
-                    data[field] = {
-                        'average': avg,
-                        'standard_deviation': std,
-                        'max': max,
-                        'min': min
-                    }
+                    try:
+                        dtype = data_types[self.known_stream_versions[stream][field]['type']]["type"]
+                        avg = np.nanmean(stream_data[field])
+                        std = np.nanstd(stream_data[field])
+                        maxval = dtype(np.nanmax(stream_data[field]))
+                        minval = dtype(np.nanmin(stream_data[field]))
+                        data[field] = {
+                            'average': avg,
+                            'standard_deviation': std,
+                            'max': maxval,
+                            'min': minval
+                        }
+                    except TypeError as e:
+                        dtype = data_types[self.known_stream_versions[stream][field]['type']]['numpy']
+                        msg = 'There was an issue taking statistics on field `{}.{}` of type `{}`.'
+                        data[field] = {}
 
         except Exception:
             self.logger.exception("Exception in server code:")
