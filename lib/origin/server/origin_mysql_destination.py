@@ -106,7 +106,7 @@ class MySQLDestination(Destination):
     def close(self):
         self.cnx.close()
 
-    def read_stream_def_table(self):
+    def read_stream_def_table(self, print_info=False):
         # make a table for the list of streams
         stream_creation = (
             "CREATE TABLE IF NOT EXISTS `origin_streams` ( "
@@ -192,7 +192,8 @@ class MySQLDestination(Destination):
 
         self.known_stream_versions = known_stream_versions
         self.known_streams = known_streams
-        self.print_stream_info()
+        if print_info:
+            self.print_stream_info()
         self.cnx.commit()
         cursor.close()
         self.cnx.disconnect()
@@ -334,7 +335,7 @@ class MySQLDestination(Destination):
         start, stop = self.validate_time_range(start, stop)
 
         if stream not in self.known_streams:
-            logger.info("Unknown stream `{}` requested, updating stream list...")
+            logger.info("Unknown stream `{}` requested, updating stream list...".format(stream))
             self.read_stream_def_table()
 
         # check if stream is still not there

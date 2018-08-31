@@ -100,7 +100,7 @@ class Destination(object):
         self.known_stream_versions = {}
 
         self.connect()
-        self.read_stream_def_table()
+        self.read_stream_def_table(print_info=True)
         if self.config.getboolean("Server", "batch_allowed"):
             self.logger.info("Batched inserts are enabled.")
             self.start_writer()

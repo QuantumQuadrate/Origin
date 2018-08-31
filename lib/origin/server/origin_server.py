@@ -24,7 +24,8 @@ except ImportError:
 
 
 class MonServer(object):
-    def __init__(self, logger, config):
+    def __init__(self, logger, config, pub=True):
+        # pub: use the publisher socket (only one can)
         self.logger = logger
         self.streamfile = ""
         self.state = "UNKNOWN"
@@ -50,10 +51,11 @@ class MonServer(object):
 
         # the publish socket does not use the event system that eveything else uses
         # I cant assign a class method to it, so it is defined here instead
-        pub_addr = "tcp://*"
-        pub_port = config.getint("Server", "pub_port")
-        self.pub_socket = zmq.Context.instance().socket(zmq.PUB)
-        self.pub_socket.bind("%s:%s" % (pub_addr, pub_port))
+        if pub:
+            pub_addr = "tcp://*"
+            pub_port = config.getint("Server", "pub_port")
+            self.pub_socket = zmq.Context.instance().socket(zmq.PUB)
+            self.pub_socket.bind("%s:%s" % (pub_addr, pub_port))
 
     # DATA HANDLER #######################################################
     def processDataMsg(self, msg, format='native'):

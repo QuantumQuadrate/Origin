@@ -78,7 +78,7 @@ def main():
     context = zmq.Context.instance()
 
     # Setup Server
-    mon = MonServer(logger, config)
+    mon = MonServer(logger, config, pub=False)
 
     # READ FORMAT ########################################################
     read_socket = context.socket(zmq.REP)
