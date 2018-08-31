@@ -51,6 +51,8 @@ from origin import data_types, current_time, TIMESTAMP, registration_validation
 #
 ###############################################################################
 
+from threading import Lock
+
 
 class QueuedObject(object):
     """An generic object that can be passed between processes."""
@@ -93,6 +95,7 @@ class Destination(object):
         """
         self.logger = logger
         self.config = config
+        self.lock = Lock()
         self.known_streams = {}
         self.known_stream_versions = {}
 
@@ -409,7 +412,7 @@ class Destination(object):
         """
         raise NotImplementedError
 
-    def get_stat_stream_data(self, stream, start=None, stop=None, fields=[]):
+    def get_stat_stream_data(self, stream, start=None, stop=None, fields=[], logger=None):
         """!@brief Get statistics on the stream data during the time window defined by
         time = [start, stop].
 
@@ -425,12 +428,15 @@ class Destination(object):
                 data sub-dictionaries as the values
             msg: holds an error msg or '' if no error
         """
+	if logger is None:
+            logger = self.logger
         try:
             result, stream_data, result_text = self.get_raw_stream_data(
                 stream,
                 start=start,
                 stop=stop,
-                fields=fields
+                fields=fields,
+                logger=logger
             )
             data = {}
             for field in stream_data:
@@ -463,7 +469,7 @@ class Destination(object):
                         data[field] = {}
 
         except Exception:
-            self.logger.exception("Exception in server code:")
+            logger.exception("Exception in server code:")
             msg = "Could not process request."
             result, data, result_text = (1, {}, msg)
 
@@ -595,7 +601,13 @@ class Destination(object):
                                 start = time.time()
                                 self.insert_measurements(s, v, stream_data[s][v], logger=logger)
                                 logmsg = 'Successfully inserted {} rows into stream: {}, elasped time: {} s'
-                                logger.info(logmsg.format(len(stream_data[s][v]), s, time.time()-start))
+                                logger.debug(logmsg.format(len(stream_data[s][v]), s, time.time()-start))
+                            except IndexError:
+                                logger.error("Inserter encounter an error likely caused by non-threadsafe connections")
+                                self.close()
+                                self.connect()
+                                logger.error("Connection reset, trying again.")
+                                self.insert_measurements(s, v, stream_data[s][v], logger=logger)
                             except:
                                 logger.exception('Unhandled server error encounter in write_worker.')
                                 # TODO: save data in queue that errored to disk

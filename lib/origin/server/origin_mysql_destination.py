@@ -13,13 +13,15 @@ from origin import data_types, TIMESTAMP
 
 
 class MySQLConnWrapper(connection.MySQLConnection):
-    def execute(self, sql, values=None):
+    def execute(self, sql, values=None, logger=None):
+	if logger is None:
+	    logger = logging.getLogger(__name__)
         try:
-            cursor = self.cursor()
+            cursor = self.cursor(buffered=True)
+            logger.debug("how bout now?")
             cursor.execute(sql, values)
         except mysql.connector.OperationalError as err:
             if err.errno == -1 or err.errno == 2055:
-                logger = logging.getLogger(__name__)
                 logger.error("MySQL disconnect event")
                 # mysql connection not available
                 self.connect()
@@ -28,7 +30,6 @@ class MySQLConnWrapper(connection.MySQLConnection):
             else:
                 raise err
         except mysql.connector.Error as err:
-            logger = logging.getLogger(__name__)
             logger.error(
                 'Unexpected mysql error encountered when trying to'
                 ' execute `{}` with values `{}`. errmsg: {}'.format(sql, values, err)
@@ -318,11 +319,14 @@ class MySQLDestination(Destination):
             cursor.close()
 
     # read stream data from storage between the timestamps given by time = [start,stop]
-    def get_raw_stream_data(self, stream, start=None, stop=None, fields=[]):
+    def get_raw_stream_data(self, stream, start=None, stop=None, fields=[], logger=None):
+        if logger is None:
+            logger = self.logger
         start, stop = self.validate_time_range(start, stop)
 
         if stream not in self.known_streams:
             msg = "Requested stream `{}` does not exist.".format(stream)
+            logger.debug(msg)
             return (1, {}, msg)
 
         if fields == []:
@@ -332,6 +336,7 @@ class MySQLDestination(Destination):
             for f in fields:
                 if f not in self.known_stream_versions[stream]:
                     msg = "Requested stream field `{}.{}` does not exist.".format(stream, f)
+                    logger.debug(msg)
                     return (1, {}, msg)
 
         fields.append(TIMESTAMP)
@@ -345,8 +350,9 @@ class MySQLDestination(Destination):
             start,
             stop
         )
-        # self.logger.warning(query % values)
-        cursor = self.cnx.execute(query % values)
+        logger.debug(query % values)
+        logger.debug('connection state: {}'.format(self.cnx.is_connected()))
+        cursor = self.cnx.execute(query % values, logger=logger)
 
         data = {}
 
@@ -354,17 +360,33 @@ class MySQLDestination(Destination):
             data[field] = []
 
         try:
+            logger.debug("I'm fetching")
 	    results = cursor.fetchall()
-        except InterfaceError:
+            logger.debug("I'm done")
+        except mysql.connector.InterfaceError:
+            logger.error("InterfaceError occured")
             err = 1
-            msg = "InterfaceError occurred"
+            msg = "Server encountered an error."
             results = []
+        except ValueError:
+            logger.error("Recieved `Packet is no an error packet error` ... ")
+            err = 1
+            msg = "Server encountered an error."
+        except IndexError:
+            logger.error("Recieved `Bytearray index out of range` ... ")
+            err = 1
+            msg = "Server encountered an error."
         else:
             err = 0
+            logger.debug("query rowcount: {}".format(cursor.rowcount))
             if cursor.rowcount <= 0:
+                logger.error('No data detected in existing stream range. {}\t{}\n{} - {}'.format(stream, fields, start, stop))
+                
+                logger.debug("query results: {}".format(results))
                 msg = "Stream declared, but no data in range."
                 err = 1
         cursor.close()
+        logger.debug("error state: {}".format(err))
 
         for row in results:
             for i, field in enumerate(fields):

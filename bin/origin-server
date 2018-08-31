@@ -59,6 +59,7 @@ class MonServer(object):
         self.streamfile = ""
         self.state = "UNKNOWN"
         self._strlist = {}
+        self.lock = threading.Lock()
 
         # create a destination object
         dest = config.get("Server", "destination").lower()
@@ -230,9 +231,11 @@ class MonServer(object):
             d = l*l
 
     # READ REQUEST HANDLER ################################################
-    def processSingleReadMsg(self, msg):
+    def processSingleReadMsg(self, msg, logger=None):
         # if msg is an empty JSON object then send back the list of known streams
         # this is used for subscriptions
+        if logger is None:
+            logger = self.logger
         if msg == '{}':
             return (0, dict(streams=self.dest.known_streams))
 
@@ -261,25 +264,27 @@ class MonServer(object):
                 else:
                     # get all fields
                     fields = []
-                self.logger.debug("Read request for stream `{}.{}` recieved.".format(stream, fields))
+                logger.debug("Read request for stream `{}.{}` recieved.".format(stream, fields))
                 if ('raw' in request_obj) and request_obj['raw']:
-                    self.logger.debug("Raw data requested.")
+                    logger.debug("Raw data requested.")
                     result, data, resultText = self.dest.get_raw_stream_data(
                         stream,
                         fields=fields,
                         start=start,
-                        stop=stop
+                        stop=stop,
+                        logger=logger,
                     )
                 else:
                     result, data, resultText = self.dest.get_stat_stream_data(
                         stream,
                         fields=fields,
                         start=start,
-                        stop=stop
+                        stop=stop,
+                        logger=logger,
                     )
 
             except Exception:
-                self.logger.exception("Unexpected exception in read message code:")
+                logger.exception("Unexpected exception in read message code:")
                 # return a list of valid options for the read
                 resultText = "Server encountered an error."
 
@@ -297,8 +302,18 @@ class MonServer(object):
 
 
 # READ FORMAT ########################################################
-def read_worker(mon, addr, context, logger):
+def read_worker(mon, addr, context, logpath, logger=None):
     '''threadable worker class so long read operations dont block other sockets'''
+    if logger is None:
+        logger = logging.getLogger('Reader')
+        logger.setLevel(logging.DEBUG)
+    
+        # Add File logger
+        fLog = logging.FileHandler("{}/READER.log".format(logpath))
+        fLog.setLevel("DEBUG")
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        fLog.setFormatter(formatter)
+        logger.addHandler(fLog)
     logger.info("read_worker thread started.  Waiting for read requests...")
 
     read_socket = context.socket(zmq.REP)
@@ -307,7 +322,7 @@ def read_worker(mon, addr, context, logger):
     while True:
         try:
             message = read_socket.recv()
-            read_socket.send_json(mon.processSingleReadMsg(message))
+            read_socket.send_json(mon.processSingleReadMsg(message, logger=logger))
         except:
             logger.exception('Unhandled exception in read_worker.')
 
@@ -421,7 +436,7 @@ def main():
 
     # READ FORMAT ########################################################
     read_sock = "{}:{}".format(read_addr, read_port)
-    args = (mon, read_sock, context, logger)
+    args = (mon, read_sock, context, fullVarPath)
     t = threading.Thread(target=read_worker, args=args)
     t.daemon = True
     t.start()
