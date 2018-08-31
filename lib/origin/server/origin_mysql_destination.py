@@ -14,10 +14,10 @@ from origin import data_types, TIMESTAMP
 
 class MySQLConnWrapper(connection.MySQLConnection):
     def execute(self, sql, values=None, logger=None):
-	if logger is None:
-	    logger = logging.getLogger(__name__)
+        if logger is None:
+            logger = logging.getLogger(__name__)
         try:
-            cursor = self.cursor(buffered=True)
+            cursor = self.cursor()
             logger.debug("how bout now?")
             cursor.execute(sql, values)
         except mysql.connector.OperationalError as err:
@@ -50,7 +50,7 @@ class MySQLConnWrapper(connection.MySQLConnection):
             logger = logging.getLogger(__name__)
             logger.error(
                 'Unexpected mysql error encountered when trying to'
-                ' execute `{}` with values `{}`. errmsg: {}'.format(sql, values, err)
+                ' execute `{}` with values `{}`. errmsg: {}'.format(sqls, err)
             )
 
         for sql in sqls:
@@ -88,6 +88,7 @@ class MySQLDestination(Destination):
         if db == '':
             db = self.config.get("MySQL", "db")
         try:
+            self.cnx.connect()
             cursor = self.cnx.execute(query.format(db))
         except mysql.connector.Error:
             self.logger.exception('Unexpected mysql exception when creating database.')
@@ -100,6 +101,7 @@ class MySQLDestination(Destination):
             cursor.close()
             sys.exit(1)
         cursor.close()
+        self.cnx.disconnect()
 
     def close(self):
         self.cnx.close()
@@ -136,6 +138,7 @@ class MySQLDestination(Destination):
         # could change to store data in a json blob later
         current_stream_versions = []
         query = "SELECT id,name,version from origin_streams"
+        self.cnx.connect()
         cursor = self.cnx.execute_list([stream_creation, stream_field_creation, query])
 
         for id, name, version in cursor:
@@ -192,6 +195,7 @@ class MySQLDestination(Destination):
         self.print_stream_info()
         self.cnx.commit()
         cursor.close()
+        self.cnx.disconnect()
 
     def create_new_stream_destination(self, stream_obj):
         stream = stream_obj["stream"]
@@ -206,6 +210,7 @@ class MySQLDestination(Destination):
             # if we are updating an existing stream, update the row
             query = "UPDATE origin_streams SET version={} WHERE name=\"{}\""
             query = query.format(version, stream)
+        self.cnx.connect()
         cursor = self.cnx.execute(query)
         # streamID = cursor.lastrowid #this doesn't seem to work with update, even though it should
         cursor.execute("SELECT id FROM origin_streams WHERE name=\"{}\" LIMIT 1".format(stream))
@@ -260,7 +265,7 @@ class MySQLDestination(Destination):
         cursor.execute(query)
         self.cnx.commit()
         cursor.close()
-        # should we close the cursor here?
+        self.cnx.disconnect()
         return stream_id
 
     def insert_measurement(self, stream, measurements):
@@ -284,11 +289,13 @@ class MySQLDestination(Destination):
         # self.logger.debug(query)
         # self.logger.debug(values)
         try:
+            self.cnx.connect()
             cursor = self.cnx.execute(query, values)
         except mysql.connector.IntegrityError:
             self.exception('Error writing data to mysql server.')
         self.cnx.commit()
         cursor.close()
+        self.cnx.disconnect()
 
     def insert_measurements(self, stream, version, measurements, logger=None):
         measurement_array = []
@@ -306,6 +313,7 @@ class MySQLDestination(Destination):
         query = """INSERT INTO measurements_{}_{} {} VALUES {}"""
         query = query.format(stream, version, ''.join(fmt), value_placeholders)
         try:
+            self.cnx.connect()
             cursor = self.cnx.execute(query, measurement_array)
         except mysql.connector.Error as err:
             msg = 'Error with mysql server. Error code: {}, msg: {}'.format(err.errno, err)
@@ -317,6 +325,7 @@ class MySQLDestination(Destination):
         else:
             self.cnx.commit()
             cursor.close()
+            self.cnx.disconnect()
 
     # read stream data from storage between the timestamps given by time = [start,stop]
     def get_raw_stream_data(self, stream, start=None, stop=None, fields=[], logger=None):
@@ -324,6 +333,11 @@ class MySQLDestination(Destination):
             logger = self.logger
         start, stop = self.validate_time_range(start, stop)
 
+        if stream not in self.known_streams:
+            logger.info("Unknown stream `{}` requested, updating stream list...")
+            self.read_stream_def_table()
+
+        # check if stream is still not there
         if stream not in self.known_streams:
             msg = "Requested stream `{}` does not exist.".format(stream)
             logger.debug(msg)
@@ -333,11 +347,20 @@ class MySQLDestination(Destination):
             fields = self.known_stream_versions[stream].keys()
         else:
             # check that the requestd fields are all in the stream defintion
+            bad_field = False
             for f in fields:
                 if f not in self.known_stream_versions[stream]:
-                    msg = "Requested stream field `{}.{}` does not exist.".format(stream, f)
-                    logger.debug(msg)
-                    return (1, {}, msg)
+                    msg = "Requested stream field `{}.{}` does not exist. Updating..."
+                    logger.debug(msg.format(stream, f))
+                    bad_field = True
+                    break
+            if bad_field:
+                self.read_stream_def_table()
+                for f in fields:
+                    if f not in self.known_stream_versions[stream]:
+                        msg = "Requested stream field `{}.{}` does not exist."
+                        logger.debug(msg.format(stream, f))
+                        return (1, {}, msg.format(stream, f))
 
         fields.append(TIMESTAMP)
         # TODO: use the built in method for putting strings together that escapes teh sql correctly
@@ -351,7 +374,8 @@ class MySQLDestination(Destination):
             stop
         )
         logger.debug(query % values)
-        logger.debug('connection state: {}'.format(self.cnx.is_connected()))
+
+        self.cnx.connect()
         cursor = self.cnx.execute(query % values, logger=logger)
 
         data = {}
@@ -361,7 +385,7 @@ class MySQLDestination(Destination):
 
         try:
             logger.debug("I'm fetching")
-	    results = cursor.fetchall()
+            results = cursor.fetchall()
             logger.debug("I'm done")
         except mysql.connector.InterfaceError:
             logger.error("InterfaceError occured")
@@ -380,12 +404,13 @@ class MySQLDestination(Destination):
             err = 0
             logger.debug("query rowcount: {}".format(cursor.rowcount))
             if cursor.rowcount <= 0:
-                logger.error('No data detected in existing stream range. {}\t{}\n{} - {}'.format(stream, fields, start, stop))
-                
+                msg = 'No data detected in existing stream range. {}\t{}\n{} - {}'
+                logger.error(msg.format(stream, fields, start, stop))
                 logger.debug("query results: {}".format(results))
                 msg = "Stream declared, but no data in range."
                 err = 1
         cursor.close()
+        self.cnx.disconnect()
         logger.debug("error state: {}".format(err))
 
         for row in results:

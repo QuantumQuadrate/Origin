@@ -38,8 +38,10 @@ class Reader(reciever.Reciever):
         @return data A dictionary containing data for each field in
             the time window
         """
-        if not self.is_stream(stream):
-            raise KeyError
+        # if not self.is_stream(stream):
+        #     self.get_available_streams()
+        #     if not self.is_stream(stream):
+        #         raise KeyError
 
         request = {
             'stream': stream.strip(),
@@ -47,12 +49,14 @@ class Reader(reciever.Reciever):
             'stop': stop,
             'raw': raw,
         }
-        if fields != []:
-            if self.is_fields(stream, fields):
-                request['fields'] = fields
-            else:
-                self.log.error('There was an issue with the specified fields.')
-                return {}
+        # if fields != []:
+        #     if self.is_fields(stream, fields):
+        #         request['fields'] = fields
+        #     else:
+        #         self.get_available_streams()
+        #         if not self.is_fields(stream, fields):
+        #             self.log.error('There was an issue with the specified fields.')
+        #             return {}
         self.read_sock.send(json.dumps(request))
         try:
             msg = self.read_sock.recv()

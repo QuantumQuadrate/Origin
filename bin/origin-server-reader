@@ -20,19 +20,13 @@ import sys
 import os
 import ConfigParser
 import logging
+import threading
 
 import zmq
 from zmq.eventloop import ioloop
 from zmq.eventloop.zmqstream import ZMQStream
 
 from origin.server import MonServer
-
-
-mysql = False
-hdf5 = False
-mongo = False
-
-logging.basicConfig()
 
 
 def main():
@@ -63,14 +57,14 @@ def main():
 
     # Add Console logger
     cLog = logging.StreamHandler()
-    cLog.setLevel("INFO")
+    cLog.setLevel(logging.INFO)
     formatter = logging.Formatter('%(levelname)s - %(message)s')
     cLog.setFormatter(formatter)
     logger.addHandler(cLog)
 
     # Add File logger
-    fLog = logging.FileHandler("{}/ORIGIN.log".format(fullVarPath))
-    fLog.setLevel("DEBUG")
+    fLog = logging.FileHandler("{}/READER.log".format(fullVarPath))
+    fLog.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fLog.setFormatter(formatter)
     logger.addHandler(fLog)
@@ -78,66 +72,21 @@ def main():
 
     logger.info("Current directory: {}".format(os.getcwd()))
 
-    reg_addr = "tcp://*"
-    reg_port = config.getint("Server", "register_port")
-
-    data_addr = "tcp://*"
-    data_port = config.getint("Server", "measure_port")
-
-    json_reg_addr = "tcp://*"
-    json_reg_port = config.getint("Server", "json_register_port")
-
-    json_data_addr = "tcp://*"
-    json_data_port = config.getint("Server", "json_measure_port")
-
-    alert_addr = "tcp://*"
-    alert_port = config.getint("Server", "alert_port")
-
-    update_period = config.getint("Server", "alert_check_period")*1e3
+    read_addr = "tcp://*"
+    read_port = config.getint("Server", "read_port")
 
     context = zmq.Context.instance()
 
     # Setup Server
     mon = MonServer(logger, config)
 
-    # NATIVE FORMAT ######################################################
-    reg_socket = context.socket(zmq.REP)
-    reg_socket.bind("%s:%s" % (reg_addr, reg_port))
+    # READ FORMAT ########################################################
+    read_socket = context.socket(zmq.REP)
+    read_socket.bind("{}:{}".format(read_addr, read_port))
+    read_socket = ZMQStream(read_socket)
+    read_socket.on_recv_stream(mon.processReadMsg)
 
-    reg_stream = ZMQStream(reg_socket)
-    reg_stream.on_recv_stream(mon.registerStream)
-
-    data_socket = context.socket(zmq.PULL)
-    data_socket.bind("%s:%s" % (data_addr, data_port))
-
-    data_stream = ZMQStream(data_socket)
-    data_stream.on_recv(mon.processDataMsg)
-
-    # JSON FORMAT ########################################################
-    json_reg_socket = context.socket(zmq.REP)
-    json_reg_socket.bind("%s:%s" % (json_reg_addr, json_reg_port))
-
-    json_reg_stream = ZMQStream(json_reg_socket)
-    json_reg_stream.on_recv_stream(mon.registerJSONStream)
-
-    json_data_socket = context.socket(zmq.PULL)
-    json_data_socket.bind("%s:%s" % (json_data_addr, json_data_port))
-
-    json_data_stream = ZMQStream(json_data_socket)
-    json_data_stream.on_recv(mon.processJSONDataMsg)
-
-    # ALERT FORMAT ########################################################
-    alert_socket = context.socket(zmq.REP)
-    alert_socket.bind("%s:%s" % (alert_addr, alert_port))
-
-    alert_stream = ZMQStream(alert_socket)
-    alert_stream.on_recv(mon.processAlertMsg)
-
-    # Periodic check for monitoring alerts
-    alerter = ioloop.PeriodicCallback(mon.CheckAlerts, update_period)
-    alerter.start()
-
-    logger.info("Main Server IOLoop Configured")
+    logger.info("Reader Server IOLoop Configured")
 
     # Start the event loop
     ioloop.IOLoop.instance().start()

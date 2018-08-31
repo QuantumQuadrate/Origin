@@ -428,7 +428,7 @@ class Destination(object):
                 data sub-dictionaries as the values
             msg: holds an error msg or '' if no error
         """
-	if logger is None:
+        if logger is None:
             logger = self.logger
         try:
             result, stream_data, result_text = self.get_raw_stream_data(
