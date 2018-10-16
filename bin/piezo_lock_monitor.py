@@ -258,7 +258,7 @@ if __name__ == '__main__':
     print('')
     pprint.pprint(sub.known_streams.keys())
 
-    stream = 'FNODE_ADCS'
+    stream = 'toy'
 
     if stream not in sub.known_streams:
         print("stream not recognized")
@@ -270,18 +270,18 @@ if __name__ == '__main__':
     # can use arbitrary callback
     # if you need to use the same base callback for multiple streams pass in specific
     # parameters through kwargs
-<<<<<<< HEAD
+
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv', adrs=None)
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv', adrs=None)
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv', adrs=None)
-=======
+
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=12, init=30, ch='c3',filename='RbMOT.csv')
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=15, init=30, ch='c4',filename='RbHF.csv')
     sub.subscribe(stream, callback=piezo_monitor, buflen=200, trigstd=6, init=30, ch='c5',filename='CsHF.csv')
->>>>>>> 5a9ee2a29ce8ba29e5e0a047a80c08c7feb91231
 
 
 
-    app.run()
+
+    app.run(host='0.0.0.0')
     sub.close()
     logger.info('closing')

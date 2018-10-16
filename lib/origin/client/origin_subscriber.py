@@ -12,8 +12,9 @@ import origin_reciever as reciever
 import multiprocessing
 
 import requests
+import logging
 
-def sub_print(stream_id, data, state, log):
+def sub_print(stream_id, data, state, log, ctrl):
     """!@brief Default stream data callback.  Prints data.
 
     @param stream_id data stream id
@@ -24,7 +25,14 @@ def sub_print(stream_id, data, state, log):
     return state
 
 
-def poller_loop(sub_addr, queue, log):
+def poller_loop(sub_addr, queue):
+    log = logging.getLogger('poller')
+    log.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    log.addHandler(ch)
     # a hash table (dict) of callbacks to perform when a message is recieved
     # the hash is the data stream filter, the value is a list of callbacks
     subscriptions = {}
@@ -166,12 +174,15 @@ def poller_loop(sub_addr, queue, log):
                         }
 
             sub_list_json = json.dumps(sub_list)
-            requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
+            try:
+                requests.put('http://127.0.0.1:5000/monitor', json=sub_list_json)
+            except IOError:
+                log.error('no monitor port found')
 
         except multiprocessing.queues.Empty:
             pass
         except IOError:
-            log.error('IOError, probably a broken pipe. Exiting..')
+            log.exception('IOError, probably a broken pipe. Exiting..')
             sys.exit(1)
         except:
             log.exception("error encountered")
@@ -228,7 +239,7 @@ class Subscriber(reciever.Reciever):
         #setup a process as obj.loop for poller-loop
         self.loop = multiprocessing.Process(
             target=loop,
-            args=(sub_addr, self.queue, logger)
+            args=(sub_addr, self.queue)
         )
         #start loop process every time subscriber class is called
         self.loop.start()
