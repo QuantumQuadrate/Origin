@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+import numpy as np
 from PIL import Image, ImageStat
 
 # first find ourself
@@ -29,12 +30,14 @@ config.read(configfile)
 
 def get_ule_state():
     im = Image.open('/dev/shm/mjpeg/cam.jpg').convert('L')
-    stat = ImageStat.Stat(im)
-    total = stat.mean[0]-22.8# subtract background
+    pix = np.array(im)    
+    pix2 = np.percentile(pix,97)
+    #total = stat.mean[0]-22.8# subtract background
     locked = 0
-    if( total > 7):
+    #print pix2
+    if( pix2 > 19):
         locked = 1
-    return (total,locked)
+    return (pix2,locked)
 
 # something that represents the connection to the server
 # might need arguments.... idk
@@ -83,6 +86,7 @@ while True:
             print time.strftime("%Y-%m-%d %H:%M")
             if(lastLock>0):
                 print "uptime: {} hours".format((ts-lastLock)/(3600*2**32))
+            print "Brightness : {}".format(tempTrans)
             print "!"*60
             print "*"*60
             print "!"*60
@@ -97,6 +101,7 @@ while True:
             print "960 Laser Lock Aquired"
             os.system('echo 0 > /sys/class/gpio/gpio15/value')
             print time.strftime("%Y-%m-%d %H:%M")
+	    print "Brightness : {}".format(tempTrans)
             print "*"*60
             print ""
         # business as usual

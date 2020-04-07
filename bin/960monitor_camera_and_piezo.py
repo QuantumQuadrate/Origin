@@ -7,8 +7,12 @@ import sys
 import os
 import time
 import serial
+import numpy as np
 from PIL import Image, ImageStat
-
+os.system("echo 15 > /sys/class/gpio/export")
+os.system("echo out > /sys/class/gpio/gpio15/direction")
+os.system("echo 0 > /sys/class/gpio/gpio15/value")
+      
 # first find ourself
 fullBinPath  = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
 fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
@@ -33,13 +37,13 @@ config.read(configfile)
 
 def get_ule_state():
     im = Image.open('/dev/shm/mjpeg/cam.jpg').convert('L')
-    stat = ImageStat.Stat(im)
-    bg=17
-    total = stat.mean[0]-bg# subtract background
+    pix=np.array(im)
+    pix2=np.percentile(pix,95)
+    #print pix2
     locked = 0
-    if( total > 5):
+    if( pix2 > 22):
         locked = 1
-    return (total,locked)
+    return (pix2,locked)
 
 def get_piezovoltage(serialdevice):
     serialdevice.write("XR?\r\n")
@@ -114,6 +118,7 @@ while True:
     ts = current_time(config)
     trans = 0
     lock = 1
+    piezovoltage=get_piezovoltage(ser)	
     for i in range(avgs):
         tempTrans,tempLock =get_ule_state()
         trans += tempTrans/avgs
