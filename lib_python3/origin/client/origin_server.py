@@ -1,4 +1,4 @@
-from origin.client import server_connection
+from origin.client import ServerConnection
 
 from origin.client import float_field
 from origin.client import integer_field

@@ -1,7 +1,3 @@
-import origin_server
-import origin_server_connection
-
-
 class float_field:
     pass
 
@@ -18,5 +14,7 @@ class file_field:
     pass
 
 
-server = origin_server.server
-server_connection = origin_server_connection.server_connection
+from origin.client import origin_server_connection
+ServerConnection = origin_server_connection.ServerConnection
+from origin.client import origin_server
+Server = origin_server.Server

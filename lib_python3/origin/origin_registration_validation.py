@@ -24,7 +24,7 @@ def simple_string(string_input: str) -> int:
 
 def registration_validation(
         stream_name: str,
-        template: Dict[str: str],
+        template: Dict[str, str],
         key_order: List[str] = None
 ) -> Tuple[bool, str]:
     """
