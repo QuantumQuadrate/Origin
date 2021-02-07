@@ -42,11 +42,11 @@ def decode(measurement_type: str) -> str:
         return measurement_type
 
 
-def declaration_formatter(stream, records, key_order):
+def declaration_formatter(stream, records, key_order)-> bytes:
     dec_str = [stream]
     for key in key_order:
         dec_str.append(':'.join([key, records[key]]))
-    return ','.join(dec_str)
+    return bytes(','.join(dec_str), encoding="utf8")
 
 
 def format_stream_declaration(stream, records, key_order, encoding_format):
@@ -119,7 +119,7 @@ class Server:
             print(f"Problem registering stream: {stream}\nError = {e}")
             print("Server did not respond in time")  # TODO how do we  know ??
             return None
-        return_code, msg = str(confirmation).split(',', 1)
+        return_code, msg = bytes(confirmation).split(b',', 1)
         print(return_code, msg)
 
         if int(return_code) != 0:
@@ -134,7 +134,7 @@ class Server:
         # error checking
         socket_data = context.socket(zmq.PUSH)
         socket_data.connect("tcp://%s:%s" % (host, msgport))
-        return server_connection(
+        return ServerConnection(
             self.config,
             stream,
             streamID,
