@@ -4,8 +4,12 @@ methods for subscribing to a data stream.
 """
 
 import json
-import receiver
-
+try:
+	import receiver
+except ModuleNotFoundError:
+	#TODO when python3 branch is merged to main, we will pip install origin (master) 
+	#from the repo, and this import line should no longer be needed.
+	from origin.client import receiver
 
 
 class Reader(receiver.Receiver):

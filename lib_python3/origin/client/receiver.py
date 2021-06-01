@@ -19,6 +19,7 @@ class Receiver(object):
         self.config = config
         self.known_streams = {}
         self.stream_list = []
+		
         self.log = logger
         self.setup()
 
