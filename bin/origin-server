@@ -63,14 +63,14 @@ def main():
 
     # Add Console logger
     cLog = logging.StreamHandler()
-    cLog.setLevel("INFO")
+    cLog.setLevel(logging.INFO)
     formatter = logging.Formatter('%(levelname)s - %(message)s')
     cLog.setFormatter(formatter)
     logger.addHandler(cLog)
 
     # Add File logger
     fLog = logging.FileHandler("{}/ORIGIN.log".format(fullVarPath))
-    fLog.setLevel("DEBUG")
+    fLog.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fLog.setFormatter(formatter)
     logger.addHandler(fLog)

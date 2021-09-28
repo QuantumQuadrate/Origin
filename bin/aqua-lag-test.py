@@ -1,0 +1,71 @@
+#!/usr/bin/env python
+
+import sys
+import os.path
+import ConfigParser
+import pprint
+import logging
+import time
+from origin.client.origin_subscriber import Subscriber
+from origin import TIMESTAMP
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+# first find ourself
+fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullCfgPath = os.path.join(fullBasePath, "config")
+
+if len(sys.argv) > 1:
+    if sys.argv[1] == 'test':
+        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+    else:
+        configfile = os.path.join(fullCfgPath, sys.argv[1])
+else:
+    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+
+config = ConfigParser.ConfigParser()
+config.read(configfile)
+
+
+# define a custom function to pass to the poller loop
+# MUST BE DEFINED BEFORE SUBSCRIBER INSTANTIATION
+def lag_test(stream_id, data, log):
+    # convert temp from mC to C
+    now = time.time()
+    try:
+        meas_time = float(data[TIMESTAMP])/2**32
+        log.info("[{}]: {:5f}".format(stream_id, now-meas_time))
+    except KeyError:
+        log.error('Problem accessing key `c0`. Are you subscribed to the right stream?')
+
+
+sub = Subscriber(config, logger)
+
+logger.info("streams")
+print('')
+pprint.pprint(sub.known_streams.keys())
+
+stream = raw_input("stream to subscribe to: ")
+
+if stream not in sub.known_streams:
+    print("stream not recognized")
+    sub.close()
+    sys.exit(1)
+
+print("subscribing to stream: %s" % (stream,))
+#sub.subscribe(stream)
+sub.subscribe(stream, callback=lag_test)
+
+try:
+    while True:
+        time.sleep(0.5)
+except KeyboardInterrupt:
+    sub.close()
+    logger.info('closing')

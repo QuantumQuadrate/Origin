@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import time
+import ConfigParser
+import logging
+from origin.client.origin_reader import Reader
+
+# first find ourself
+fullBinPath = os.path.abspath(os.getcwd() + "/" + sys.argv[0])
+fullBasePath = os.path.dirname(os.path.dirname(fullBinPath))
+fullCfgPath = os.path.join(fullBasePath, "config")
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+if len(sys.argv) > 1:
+    if sys.argv[1] == 'test':
+        configfile = os.path.join(fullCfgPath, "origin-server-test.cfg")
+    else:
+        configfile = os.path.join(fullCfgPath, sys.argv[1])
+else:
+    configfile = os.path.join(fullCfgPath, "origin-server.cfg")
+
+config = ConfigParser.ConfigParser()
+config.read(configfile)
+
+reader = Reader(config, logger)
+print(reader.known_streams)
+stream = 'toys234'
+
+

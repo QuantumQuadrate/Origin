@@ -59,7 +59,7 @@ if stream not in sub.known_streams:
 
 print("subscribing to stream: %s" % (stream,))
 sub.subscribe(stream)
-sub.subscribe(stream, callback=thermistor_print)
+#sub.subscribe(stream, callback=thermistor_print)
 
 try:
     while True:
