@@ -475,6 +475,60 @@ class Destination(object):
 
         return(result, data, result_text)
 
+    def get_reduced_stream_data(self, stream, start=None, stop=None, fields=[], logger=None, max_points=300):
+        """!@brief Get reduced stream data during the time window defined by
+        time = [start, stop] using simple evenly spaced sampling.
+
+        @param stream a string holding the stream name
+        @param start 32b unix timestamp that defines the start of the data
+            window
+        @param stop 32b unix timestamp that defines the end of the data window
+        @param fields A list that contains the fields for which data is
+            desired, the value of the dictionary key is arbitrary.
+        @param max_points An int of max number points to return in dataset.
+        @return a tuple with (error, data, msg)
+            error: 0 for a successful operation
+            data: data is dictionary with fields as the keys and statistical
+                data sub-dictionaries as the values
+            msg: holds an error msg or '' if no error
+        """
+        if logger is None:
+            logger = self.logger
+        try:
+            # Retrieve raw data
+            result, stream_data, result_text = self.get_raw_stream_data(
+                stream,
+                start=start,
+                stop=stop,
+                fields=fields,
+                logger=logger
+            )
+            
+            # Data is missing or length is less than max points ... return data
+            if TIMESTAMP not in stream_data or len(stream_data[TIMESTAMP]) <= max_points:
+                return(result, stream_data, result_text)
+
+            # Init data
+            data = {}
+            for field in stream_data:
+                data[field] = []
+
+            # Loop through max number of points of dataset
+            for i in range(max_points):
+                # Get index of original data
+                data_index = int(len(stream_data[TIMESTAMP]) / max_points * i)
+                
+                # Add data for all fields
+                for field in stream_data:
+                    data[field].append(stream_data[field][data_index])
+
+        except Exception:
+            logger.exception("Exception in server code:")
+            msg = "Could not process request."
+            result, data, result_text = (1, {}, msg)
+
+        return(result, data, result_text)
+
     def validate_time_range(self, start, stop):
         """!@brief Make sure the time range is valid, if not rearrange start and stop
         times.

@@ -236,6 +236,10 @@ class MonServer(object):
                 stop = request_obj['stop']
             else:
                 stop = None
+            if 'max_points' in request_obj:
+                max_points = request_obj['max_points']
+            else:
+                max_points = None
 
             try:
                 if 'fields' in request_obj:
@@ -253,6 +257,16 @@ class MonServer(object):
                         start=start,
                         stop=stop,
                         logger=self.logger,
+                    )
+                elif max_points is not None:
+                    self.logger.debug("Data with max points of " + str(max_points) + " requested.")
+                    result, data, resultText = self.dest.get_reduced_stream_data(
+                        stream,
+                        fields=fields,
+                        start=start,
+                        stop=stop,
+                        logger=self.logger,
+                        max_points=max_points
                     )
                 else:
                     result, data, resultText = self.dest.get_stat_stream_data(

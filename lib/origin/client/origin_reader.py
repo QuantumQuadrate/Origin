@@ -27,7 +27,7 @@ class Reader(reciever.Reciever):
         self.get_available_streams()
 
     def get_stream_data(self, stream,
-                        start=None, stop=None, fields=[], raw=False):
+                        start=None, stop=None, fields=[], raw=False, max_points=None):
         """!@brief Request raw stream data in time window from sever.
 
         @param stream A string holding the stream name
@@ -35,6 +35,7 @@ class Reader(reciever.Reciever):
             window
         @param stop 32b Unix timestamp that defines the end of the data window
         @param fields A list of fields from the stream that should be returned
+        @param max_points An int of max number points to return in dataset.
         @return data A dictionary containing data for each field in
             the time window
         """
@@ -48,15 +49,16 @@ class Reader(reciever.Reciever):
             'start': start,
             'stop': stop,
             'raw': raw,
+            'max_points': max_points,
         }
-        # if fields != []:
-        #     if self.is_fields(stream, fields):
-        #         request['fields'] = fields
-        #     else:
-        #         self.get_available_streams()
-        #         if not self.is_fields(stream, fields):
-        #             self.log.error('There was an issue with the specified fields.')
-        #             return {}
+        if fields != []:
+            if self.is_fields(stream, fields):
+                request['fields'] = fields
+            else:
+                self.get_available_streams()
+                if not self.is_fields(stream, fields):
+                    self.log.error('There was an issue with the specified fields.')
+                    return {}
         self.read_sock.send(json.dumps(request))
         try:
             msg = self.read_sock.recv()
@@ -114,4 +116,25 @@ class Reader(reciever.Reciever):
             stop=stop,
             fields=fields,
             raw=False
+        )
+
+    def get_stream_reduce_data(self, stream, start=None, stop=None, fields=[], max_points=300):
+        """!@brief Request reduced stream data in time window from sever.
+
+        @param stream A string holding the stream name
+        @param start 32b Unix timestamp that defines the start of the data
+            window
+        @param stop 32b Unix timestamp that defines the end of the data window
+        @param fields A list of fields from the stream that should be returned
+        @param max_points An int of max number points to return in dataset.
+        @return data A dictionary containing raw data for each field in
+            the time window
+        """
+        return self.get_stream_data(
+            stream,
+            start=start,
+            stop=stop,
+            fields=fields,
+            raw=False,
+            max_points=max_points
         )
