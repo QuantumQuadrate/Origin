@@ -25,11 +25,11 @@ def sub_print(stream_id, data, state, log, ctrl):
     return state
 
 
-def poller_loop(sub_addr, queue):
+def poller_loop(sub_addr, queue, level=logging.DEBUG):
     log = logging.getLogger('poller')
-    log.setLevel(logging.DEBUG)
+    log.setLevel(level)
     ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
+    ch.setLevel(level)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
     log.addHandler(ch)
@@ -219,12 +219,13 @@ class Subscriber(receiver.Receiver):
     """!@brief A class representing a data stream subscription to a data server
     """
 
-    def __init__(self, config, logger, loop=poller_loop):
+    def __init__(self, config, logger, loop=poller_loop,**kwargs):
         """!@brief Initialize the subscriber
 
         @param config configuration object
         @param logger python logging object
         @param loop custom poller loop
+        @param kwargs of loop function
         """
         # call the parent class initialization
         super(Subscriber, self).__init__(config, logger)
@@ -239,7 +240,8 @@ class Subscriber(receiver.Receiver):
         #setup a process as obj.loop for poller-loop
         self.loop = multiprocessing.Process(
             target=loop,
-            args=(sub_addr, self.queue)
+            args=(sub_addr, self.queue),
+            kwargs=kwargs
         )
         #start loop process every time subscriber class is called
         self.loop.start()
