@@ -48,6 +48,11 @@ class Receiver(object):
         self.read_sock.send_string('{}')
         try:
             err, known_streams = json.loads(self.read_sock.recv())
+        except KeyboardInterrupt as e:
+            self.log.warning("Canceling server conncetion")
+            for sock in self.sockets:
+                sock.close()
+            raise
         except:
             self.log.exception("Error connecting to data server")
         else:
