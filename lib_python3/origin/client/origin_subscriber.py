@@ -187,7 +187,10 @@ def poller_loop(sub_addr, queue, level=logging.DEBUG):
             log.exception("error encountered")
 
         try:
-            [streamID, content] = sub_sock.recv_multipart()
+            try:
+                [streamID, content] = sub_sock.recv_multipart()
+            except KeyboardInterrupt:
+                continue
             try:
                 log.debug("new data")
                 for cb in subscriptions[streamID.decode('ascii')]:
